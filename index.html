@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>海龟汤车队</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="gateView" class="gate-view" aria-label="车队登录">
+        <div class="gate-visual">
+          <img src="assets/soup-table.svg" alt="" />
+          <div>
+            <p class="eyebrow">Turtle Soup Fleet</p>
+            <h1>海龟汤车队</h1>
+            <p class="lead">输入车队密码后进入大厅，创建房间或加入已有房间。</p>
+          </div>
+        </div>
+
+        <form id="fleetForm" class="gate-card">
+          <label for="fleetPassword">车队密码</label>
+          <div class="password-row">
+            <input
+              id="fleetPassword"
+              type="password"
+              autocomplete="current-password"
+              placeholder="输入车队密码"
+              required
+            />
+            <button type="submit">进入大厅</button>
+          </div>
+          <p id="gateMessage" class="form-message" role="status"></p>
+        </form>
+      </section>
+
+      <section id="lobbyView" class="lobby-view hidden" aria-label="车队大厅">
+        <header class="app-header">
+          <div>
+            <p class="eyebrow">Fleet Lobby</p>
+            <h1>车队大厅</h1>
+          </div>
+          <div class="identity-pill">
+            <span id="roleLabel">玩家</span>
+            <button id="logoutBtn" type="button">退出</button>
+          </div>
+        </header>
+
+        <div class="lobby-grid">
+          <section id="createRoomPanel" class="action-panel">
+            <div class="panel-heading">
+              <p class="eyebrow">Create</p>
+              <h2>创建房间</h2>
+            </div>
+            <form id="createRoomForm" class="stack-form">
+              <label for="roomNameInput">房间名称</label>
+              <input id="roomNameInput" type="text" maxlength="18" value="雨夜推理局" />
+              <label for="roomMaxInput">最大成员数量</label>
+              <input id="roomMaxInput" type="number" min="2" max="20" value="10" />
+              <label for="roomSanMaxInput">SAN 值上限</label>
+              <input id="roomSanMaxInput" type="number" min="10" max="999" value="100" />
+              <label class="option-line" for="roomLockedInput">
+                <input id="roomLockedInput" type="checkbox" />
+                <span>锁定房间</span>
+              </label>
+              <label for="nicknameInput">你的昵称</label>
+              <input id="nicknameInput" type="text" maxlength="12" value="新成员" />
+              <button type="submit">创建房间</button>
+            </form>
+          </section>
+
+          <section class="action-panel">
+            <div class="panel-heading">
+              <p class="eyebrow">Join</p>
+              <h2>加入房间</h2>
+            </div>
+            <form id="joinRoomForm" class="stack-form">
+              <label for="roomCodeInput">房间号</label>
+              <input id="roomCodeInput" type="text" maxlength="8" placeholder="例如 TS2048" />
+              <label for="joinNameInput">你的昵称</label>
+              <input id="joinNameInput" type="text" maxlength="12" value="新成员" />
+              <button type="submit">加入房间</button>
+            </form>
+            <p class="helper-text">演示房间号：TS2048</p>
+          </section>
+
+          <section class="room-panel">
+            <div class="room-topline">
+              <div>
+                <p class="eyebrow">Room</p>
+                <h2 id="roomTitle">未进入房间</h2>
+              </div>
+              <span id="roomCodeBadge" class="room-code">----</span>
+            </div>
+
+            <div class="member-summary">
+              <div>
+                <span>成员</span>
+                <strong id="memberCount">0/10</strong>
+              </div>
+              <div>
+                <span>语音</span>
+                <strong id="voiceStatus">待连接</strong>
+              </div>
+              <div>
+                <span>SAN</span>
+                <strong id="sanSummary">100</strong>
+              </div>
+            </div>
+
+            <div id="memberList" class="member-list" aria-live="polite">
+              <p class="empty-state">创建或加入房间后显示成员列表。</p>
+            </div>
+
+            <section id="roomSettingsPanel" class="room-settings-panel hidden" aria-label="房间设置">
+              <div class="panel-heading">
+                <p class="eyebrow">Settings</p>
+                <h2>房间信息</h2>
+              </div>
+              <form id="roomSettingsForm" class="stack-form">
+                <label for="settingsRoomNameInput">房间名称</label>
+                <input id="settingsRoomNameInput" type="text" maxlength="18" />
+                <label for="settingsMaxMembersInput">最大成员数量</label>
+                <input id="settingsMaxMembersInput" type="number" min="2" max="20" />
+                <label for="settingsSanMaxInput">SAN 值上限</label>
+                <input id="settingsSanMaxInput" type="number" min="10" max="999" />
+                <label for="settingsSanValueInput">当前 SAN 值</label>
+                <input id="settingsSanValueInput" type="number" min="0" max="999" />
+                <label class="option-line" for="settingsLockedInput">
+                  <input id="settingsLockedInput" type="checkbox" />
+                  <span>锁定房间</span>
+                </label>
+                <div class="settings-actions">
+                  <button type="submit">保存设置</button>
+                  <button id="resetGameBtn" class="danger-button" type="button">重置游戏</button>
+                </div>
+              </form>
+            </section>
+
+            <button id="enterGameBtn" class="primary-wide" type="button" disabled>进入游戏</button>
+          </section>
+
+          <section id="adminRoomsPanel" class="admin-rooms-panel hidden">
+            <div class="panel-heading">
+              <p class="eyebrow">Admin</p>
+              <h2>房间巡查</h2>
+            </div>
+            <div id="adminRoomList" class="admin-room-list">
+              <p class="empty-state">管理员进入后显示所有房间。</p>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="gameView" class="game-view hidden" aria-label="海龟汤游戏界面">
+        <header class="game-header">
+          <div>
+            <p class="eyebrow">Room <span id="gameRoomCode">----</span></p>
+            <h1 id="gameRoomTitle">雨夜推理局</h1>
+          </div>
+          <div class="game-actions">
+            <button id="backLobbyBtn" type="button">大厅</button>
+            <button id="sanMoodBtn" type="button" aria-pressed="true">SAN 氛围</button>
+            <button id="muteBtn" type="button" aria-pressed="false">静音</button>
+          </div>
+        </header>
+
+        <section class="player-strip" aria-label="玩家头像栏">
+          <div id="playerAvatarList" class="player-avatar-list"></div>
+          <span id="socketStatus" class="socket-status">未连接</span>
+        </section>
+
+        <nav class="mobile-tabs" aria-label="游戏面板切换">
+          <button type="button" class="active" data-panel="chat">聊天</button>
+          <button type="button" data-panel="soup">汤面</button>
+          <button type="button" data-panel="record">记录</button>
+          <button type="button" data-panel="ask">提问</button>
+          <button type="button" data-panel="manage" data-host-only>管理</button>
+        </nav>
+
+        <div class="play-grid">
+          <section class="chat-panel" data-panel-view="chat">
+            <div class="chat-head">
+              <div>
+                <p class="eyebrow">Chat</p>
+                <h2>队伍聊天</h2>
+              </div>
+            </div>
+            <div id="chatList" class="chat-list"></div>
+            <form id="chatForm" class="chat-form">
+              <textarea id="chatInput" rows="2" placeholder="发送文字消息"></textarea>
+              <button type="submit">发送</button>
+            </form>
+          </section>
+
+          <section class="story-panel" data-panel-view="soup">
+            <div class="story-head">
+              <div>
+                <p class="eyebrow">Soup</p>
+                <h2 id="soupTitle">雨夜车站</h2>
+              </div>
+              <button id="toggleSoupBtn" type="button">展开</button>
+            </div>
+            <p id="soupText" class="soup-text collapsed">
+              一个男人在雨夜走进空荡荡的车站。他看见墙上的时刻表后，立刻买了最晚的一班车票。第二天，警方在他的家里找到了真相。
+            </p>
+            <section id="answerRevealPanel" class="answer-panel hidden" aria-live="polite">
+              <div class="answer-head">
+                <p class="eyebrow">Answer</p>
+                <button id="toggleAnswerBtn" type="button">展开</button>
+              </div>
+              <p id="answerText" class="answer-text collapsed"></p>
+            </section>
+            <section class="progress-panel">
+              <div class="progress-head">
+                <div>
+                  <p class="eyebrow">Progress</p>
+                  <h2>完成度</h2>
+                </div>
+                <strong id="progressPercent">0%</strong>
+              </div>
+              <div class="progress-track"><span id="progressBar"></span></div>
+              <div id="playerProgressList" class="player-progress-list"></div>
+            </section>
+          </section>
+
+          <section class="result-panel" data-panel-view="record">
+            <div class="result-head">
+              <div>
+                <p class="eyebrow">History</p>
+                <h2>提问结果</h2>
+              </div>
+              <button id="compactResultsBtn" type="button" aria-pressed="false">简化</button>
+            </div>
+            <div id="resultList" class="result-list" aria-live="polite">
+              <p class="empty-state">提问后会显示历史结果与主持提示。</p>
+            </div>
+          </section>
+        </div>
+
+        <section class="control-deck" data-panel-view="ask">
+          <form id="questionForm" class="question-form">
+            <label for="questionInput">问题输入</label>
+            <div class="input-row">
+              <textarea id="questionInput" rows="2" placeholder="只能问可判定的问题"></textarea>
+              <button id="askBtn" type="submit">提问</button>
+            </div>
+          </form>
+
+          <section class="san-panel">
+            <div class="san-label">
+              <span>SAN 值</span>
+              <strong><span id="sanValue">100</span>/<span id="sanMaxValue">100</span></strong>
+            </div>
+            <div class="san-track">
+              <span id="sanBar"></span>
+            </div>
+          </section>
+
+          <section id="hostControls" class="host-controls hidden">
+            <p class="eyebrow">主持判定</p>
+            <div id="pendingQuestionPreview" class="pending-question-preview">
+              <span>当前待答</span>
+              <strong>暂无待判定问题</strong>
+            </div>
+            <div class="judge-buttons">
+              <button type="button" data-result="是">是</button>
+              <button type="button" data-result="不是">不是</button>
+              <button type="button" data-result="是也不是">是也不是</button>
+              <button type="button" data-result="接近">接近</button>
+              <button type="button" data-result="不重要">不重要</button>
+            </div>
+            <textarea id="hostHintInput" rows="3" placeholder="主持人的提示"></textarea>
+            <button id="sendHintBtn" type="button">发送提示</button>
+          </section>
+        </section>
+
+        <section id="hostManagePanel" class="host-manage-panel hidden" data-panel-view="manage" aria-label="主持管理">
+          <section class="host-editor-panel">
+            <div class="panel-heading">
+              <p class="eyebrow">Host Edit</p>
+              <h2>汤面与汤底</h2>
+            </div>
+            <label for="hostSoupTitleInput">汤面名称</label>
+            <input id="hostSoupTitleInput" type="text" maxlength="40" />
+            <label for="hostSoupInput">汤面</label>
+            <textarea id="hostSoupInput" rows="4"></textarea>
+            <label for="hostAnswerInput">汤底</label>
+            <textarea id="hostAnswerInput" rows="4"></textarea>
+            <div class="host-editor-actions">
+              <button id="saveSoupBtn" type="button">保存编辑</button>
+              <button id="revealAnswerBtn" class="danger-button" type="button">显示汤底</button>
+            </div>
+          </section>
+
+          <section class="host-progress-panel">
+            <div class="panel-heading">
+              <p class="eyebrow">Checklist</p>
+              <h2>关键节点</h2>
+            </div>
+            <form id="progressForm" class="progress-form">
+              <input id="progressInput" type="text" maxlength="120" placeholder="添加关键节点" />
+              <button type="submit">添加</button>
+            </form>
+            <div id="hostProgressList" class="host-progress-list"></div>
+          </section>
+        </section>
+
+        <section class="voice-panel" aria-label="语音控制栏">
+          <div class="panel-heading">
+            <p class="eyebrow">LiveKit SFU</p>
+            <h2>语音控制栏</h2>
+          </div>
+          <div id="voiceList" class="voice-list"></div>
+        </section>
+
+        <section class="leaderboard-panel" aria-label="排行榜">
+          <div class="panel-heading">
+            <p class="eyebrow">Score</p>
+            <h2>排行榜</h2>
+          </div>
+          <div id="leaderboardList" class="leaderboard-list"></div>
+        </section>
+      </section>
+    </main>
+
+    <div id="remoteAudio" aria-hidden="true"></div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/vendor/livekit/livekit-client.umd.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 720" role="img" aria-label="海龟汤桌面插画">
+  <defs>
+    <linearGradient id="table" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#d7b77a"/>
+      <stop offset="1" stop-color="#8d6033"/>
+    </linearGradient>
+    <linearGradient id="bowl" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#fff8e9"/>
+      <stop offset="1" stop-color="#d7e5df"/>
+    </linearGradient>
+    <linearGradient id="soup" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f3c45c"/>
+      <stop offset="1" stop-color="#c46b3e"/>
+    </linearGradient>
+  </defs>
+  <rect width="720" height="720" rx="72" fill="#173f35"/>
+  <circle cx="360" cy="374" r="276" fill="url(#table)"/>
+  <circle cx="360" cy="374" r="220" fill="#6b4428" opacity=".18"/>
+  <ellipse cx="360" cy="410" rx="210" ry="118" fill="#201811" opacity=".18"/>
+  <ellipse cx="360" cy="340" rx="190" ry="156" fill="url(#bowl)"/>
+  <ellipse cx="360" cy="324" rx="146" ry="108" fill="url(#soup)"/>
+  <path d="M268 307c47 31 135 33 185 3" fill="none" stroke="#ffe9a8" stroke-width="18" stroke-linecap="round" opacity=".7"/>
+  <path d="M315 279c26-22 66-23 92 0 16 14 22 36 11 52-13 20-47 21-65 4-19 18-53 14-66-7-10-16 0-36 28-49Z" fill="#347b61"/>
+  <circle cx="311" cy="295" r="8" fill="#12342a"/>
+  <circle cx="405" cy="295" r="8" fill="#12342a"/>
+  <path d="M326 324c21 12 47 12 68 0" fill="none" stroke="#12342a" stroke-width="10" stroke-linecap="round"/>
+  <path d="M224 196 130 120" stroke="#f8f2e6" stroke-width="18" stroke-linecap="round"/>
+  <path d="M496 198 590 122" stroke="#f8f2e6" stroke-width="18" stroke-linecap="round"/>
+  <path d="M182 563h356" stroke="#f8f2e6" stroke-width="24" stroke-linecap="round" opacity=".9"/>
+  <path d="M214 604h292" stroke="#f8f2e6" stroke-width="18" stroke-linecap="round" opacity=".42"/>
+  <circle cx="206" cy="239" r="18" fill="#f8f2e6" opacity=".72"/>
+  <circle cx="522" cy="238" r="18" fill="#f8f2e6" opacity=".72"/>
+  <circle cx="162" cy="452" r="13" fill="#f8f2e6" opacity=".58"/>
+  <circle cx="561" cy="455" r="13" fill="#f8f2e6" opacity=".58"/>
+</svg>
