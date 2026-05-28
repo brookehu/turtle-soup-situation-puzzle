@@ -603,6 +603,11 @@ textarea:focus {
   font-size: 1.25rem;
 }
 
+.member-summary strong.status-error {
+  color: var(--red);
+  font-size: 1rem;
+}
+
 .member-list,
 .voice-list,
 .result-list,

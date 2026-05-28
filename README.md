@@ -49,10 +49,58 @@ docker compose up -d --build
 `docker-compose.yml` 会启动：
 
 - `app`：游戏服务，默认暴露 `3000`
-- `livekit`：语音服务，默认暴露 `7880/7881/7882udp`
+- `livekit`：语音服务，默认暴露 `7880/7881/7882udp`，并可按 `.env` 暴露 TURN 端口
 - `turtle-data`：SQLite 数据 volume，挂载到 `/app/data`
 
 公网部署时建议放在反向代理后面，并启用 HTTPS/WSS。
+
+## 公网语音部署
+
+LiveKit 分两层连接：
+
+- 信令：浏览器连接 `PUBLIC_LIVEKIT_URL`，通常是 `wss://voice.example.com`。
+- 媒体：WebRTC 通过 ICE/TURN 传音频。只让 `voice.example.com` 的 443 能访问，不等于语音媒体一定可用。
+
+公网部署时请确认：
+
+```text
+7880/tcp    LiveKit HTTP/WebSocket，通常放在反向代理后面
+7881/tcp    WebRTC TCP ICE
+7882/udp    WebRTC UDP ICE
+3478/udp    TURN UDP，端口可通过 LIVEKIT_TURN_UDP_PORT 修改
+5349/tcp    TURN TLS，端口可通过 LIVEKIT_TURN_TLS_PORT 修改
+```
+
+如果 `voice.example.com` 使用 Cloudflare 普通橙云代理，WebSocket 信令可能正常，但 UDP/TCP 媒体端口不会自动被普通 HTTP 代理转发。建议选择其中一种方式：
+
+- `voice.example.com` 灰云直连 LiveKit/反向代理，并在服务器防火墙和云安全组放行上面的端口。
+- 或者继续让主站走 Cloudflare，但为 LiveKit/TURN 使用可直连的独立域名。
+- 或者使用能代理 TCP/UDP 的 L4 服务，例如 Cloudflare Spectrum，并正确转发 ICE/TURN 端口。
+
+`.env` 中 LiveKit 相关项示例：
+
+```env
+LIVEKIT_URL=ws://livekit:7880
+PUBLIC_LIVEKIT_URL=wss://voice.example.com
+LIVEKIT_API_KEY=请改掉
+LIVEKIT_API_SECRET=请改掉
+LIVEKIT_TURN_ENABLED=true
+LIVEKIT_TURN_DOMAIN=voice.example.com
+LIVEKIT_TURN_UDP_PORT=3478
+LIVEKIT_TURN_TLS_PORT=5349
+LIVEKIT_TURN_EXTERNAL_TLS=false
+```
+
+修改 `.env` 后重新部署：
+
+```bash
+docker compose up -d --build
+docker compose logs -f livekit
+```
+
+`.env.example` 默认不启用 TURN，避免没有域名/TLS/端口时 LiveKit 启动失败。公网确认端口、域名和 TLS 转发后，把 `LIVEKIT_TURN_ENABLED` 改成 `true`。
+
+电脑端排查语音时，可打开 `chrome://webrtc-internals`。若 `audioInputLevel` 有变化但 outbound audio 的 `bytesSent/packetsSent` 不增长，通常是 ICE/TURN/端口问题；若 `audioInputLevel` 一直为 0，通常是系统输入设备、浏览器权限或麦克风被占用。
 
 ## 环境变量
 
@@ -68,6 +116,11 @@ ADMIN_PASSWORD=请改掉
 
 LIVEKIT_URL=ws://livekit:7880
 PUBLIC_LIVEKIT_URL=wss://你的语音域名
+LIVEKIT_API_KEY=请改掉
+LIVEKIT_API_SECRET=请改掉
+LIVEKIT_TURN_ENABLED=true
+LIVEKIT_TURN_DOMAIN=你的语音域名
+LIVEKIT_TURN_EXTERNAL_TLS=false
 
 CORS_ORIGIN=
 DISCONNECT_GRACE_MS=12000

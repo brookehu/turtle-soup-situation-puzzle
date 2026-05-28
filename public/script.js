@@ -285,7 +285,7 @@ function renderLobbyRoom() {
     els.roomTitle.textContent = "未进入房间";
     els.roomCodeBadge.textContent = "----";
     els.memberCount.textContent = "0/10";
-    els.voiceStatus.textContent = "待连接";
+    setVoiceStatus("待连接");
     els.sanSummary.textContent = "100";
     els.memberList.innerHTML = '<p class="empty-state">创建或加入房间后显示成员列表。</p>';
     els.roomSettingsPanel.classList.add("hidden");
@@ -299,7 +299,7 @@ function renderLobbyRoom() {
   els.roomTitle.textContent = state.room.name;
   els.roomCodeBadge.textContent = state.room.code;
   els.memberCount.textContent = `${state.room.members.length}/${state.room.maxMembers}`;
-  els.voiceStatus.textContent = state.room.locked ? "已锁定" : "LiveKit SFU";
+  setVoiceStatus(state.room.locked ? "已锁定" : "LiveKit SFU");
   els.sanSummary.textContent = `${state.san}/${state.room.sanMax}`;
   els.memberList.innerHTML = state.room.members.map(renderMemberCard).join("");
   els.roomSettingsPanel.classList.toggle("hidden", !canManageRoom());
@@ -934,7 +934,7 @@ function applyVoiceBlock(playerId, blocked, muted) {
 
 async function connectLiveKit() {
   if (!window.LivekitClient) {
-    els.voiceStatus.textContent = "LiveKit客户端未加载";
+    setVoiceStatus("LiveKit客户端未加载", true);
     return;
   }
 
@@ -951,23 +951,43 @@ async function connectLiveKit() {
   const room = new Room({
     adaptiveStream: false,
     dynacast: false,
-    audioCaptureDefaults: {
-      autoGainControl: true,
-      channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
-      voiceIsolation: true,
-    },
+    audioCaptureDefaults: getAudioCaptureDefaults(),
     publishDefaults: {
       audioPreset: AudioPresets?.speech || { maxBitrate: 24000 },
       dtx: false,
       red: true,
       forceStereo: false,
-      stopMicTrackOnMute: false,
+      stopMicTrackOnMute: true,
     },
     webAudioMix: true,
   });
 
+  room.on(RoomEvent.ConnectionStateChanged, (connectionState) => {
+    setVoiceStatus(voiceConnectionText(connectionState));
+  });
+  room.on(RoomEvent.Reconnecting, () => setVoiceStatus("语音重连中"));
+  room.on(RoomEvent.Reconnected, () => setVoiceStatus(state.muted ? "语音已连接" : "麦克风已开启"));
+  room.on(RoomEvent.Disconnected, () => setVoiceStatus("语音已断开", true));
+  room.on(RoomEvent.MediaDevicesError, (error) => {
+    console.warn("LiveKit media device error", error);
+    setVoiceStatus("麦克风不可用", true);
+  });
+  room.on(RoomEvent.LocalTrackPublished, (publication) => {
+    if (publication?.kind === window.LivekitClient.Track.Kind.Audio) {
+      setVoiceStatus("麦克风已开启");
+    }
+  });
+  room.on(RoomEvent.LocalTrackUnpublished, (publication) => {
+    if (publication?.kind === window.LivekitClient.Track.Kind.Audio) {
+      setVoiceStatus("麦克风已关闭");
+    }
+  });
+  room.on(RoomEvent.LocalAudioSilenceDetected, () => {
+    setVoiceStatus("检测不到麦克风声音", true);
+  });
+  room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+    if (!room.canPlaybackAudio) setVoiceStatus("点击页面恢复播放", true);
+  });
   room.on(RoomEvent.TrackSubscribed, attachRemoteAudio);
 
   room.on(RoomEvent.TrackUnsubscribed, (track) => {
@@ -983,8 +1003,35 @@ async function connectLiveKit() {
   });
   await room.localParticipant.setMicrophoneEnabled(false);
   state.livekitRoom = room;
-  els.voiceStatus.textContent = "LiveKit已连接";
+  setVoiceStatus("语音已连接");
   updateMuteButton();
+}
+
+function getAudioCaptureDefaults() {
+  const supported = navigator.mediaDevices?.getSupportedConstraints?.() || {};
+  const defaults = {
+    autoGainControl: true,
+    channelCount: 1,
+    echoCancellation: true,
+    noiseSuppression: true,
+  };
+  if (supported.voiceIsolation) defaults.voiceIsolation = true;
+  return defaults;
+}
+
+function voiceConnectionText(connectionState) {
+  const textMap = {
+    connected: state.muted ? "语音已连接" : "麦克风已开启",
+    connecting: "语音连接中",
+    reconnecting: "语音重连中",
+    disconnected: "语音已断开",
+  };
+  return textMap[String(connectionState || "").toLowerCase()] || "语音连接中";
+}
+
+function setVoiceStatus(text, isError = false) {
+  els.voiceStatus.textContent = text;
+  els.voiceStatus.classList.toggle("status-error", isError);
 }
 
 function attachRemoteAudio(track) {
@@ -1000,9 +1047,13 @@ function attachRemoteAudio(track) {
   audio.dataset.livekitRemote = "true";
   if (trackId) audio.dataset.livekitTrack = trackId;
   audio.autoplay = true;
+  audio.muted = false;
   audio.playsInline = true;
   els.remoteAudio.append(audio);
-  audio.play?.().catch(() => {});
+  audio.play?.().catch((error) => {
+    console.warn("Remote audio playback blocked", error);
+    setVoiceStatus("点击页面恢复播放", true);
+  });
 }
 
 function updateMuteButton() {
@@ -1022,15 +1073,37 @@ async function setMuted(nextMuted) {
     alert("你已被主持人禁言。");
     nextMuted = true;
   }
+  const previousMuted = state.muted;
   state.muted = nextMuted;
   updateMuteButton();
 
-  if (state.livekitRoom) {
-    await state.livekitRoom.localParticipant.setMicrophoneEnabled(!nextMuted);
+  try {
+    if (state.livekitRoom) {
+      await state.livekitRoom.localParticipant.setMicrophoneEnabled(!nextMuted);
+      await state.livekitRoom.startAudio?.().catch(() => {});
+    }
+  } catch (error) {
+    console.warn("Failed to change microphone state", error);
+    state.muted = previousMuted;
+    updateMuteButton();
+    setVoiceStatus(nextMuted ? "静音失败" : "麦克风开启失败", true);
+    alert(`语音切换失败：${voiceErrorMessage(error)}`);
+    renderVoice();
+    return;
   }
 
+  setVoiceStatus(nextMuted ? "麦克风已关闭" : "麦克风已开启");
   state.socket?.emit("mute_status", { muted: nextMuted });
   renderVoice();
+}
+
+function voiceErrorMessage(error) {
+  const name = error?.name || "";
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") return "浏览器或系统拒绝了麦克风权限。";
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") return "没有找到可用的录音设备。";
+  if (name === "NotReadableError" || name === "TrackStartError") return "录音设备被其他程序占用，或系统输入设备不可用。";
+  if (name === "OverconstrainedError") return "当前浏览器不支持所需的麦克风采集参数。";
+  return error?.message || "请检查浏览器控制台和系统麦克风设置。";
 }
 
 function escapeHtml(value) {
@@ -1192,7 +1265,7 @@ els.enterGameBtn.addEventListener("click", async () => {
   try {
     await connectLiveKit();
   } catch (error) {
-    els.voiceStatus.textContent = "语音未连接";
+    setVoiceStatus("语音未连接", true);
     console.warn(error);
   }
 });
@@ -1210,6 +1283,16 @@ els.leaveRoomBtn.addEventListener("click", () => {
 els.muteBtn.addEventListener("click", () => {
   setMuted(!state.muted).catch((error) => console.warn(error));
 });
+
+function resumeLiveKitAudio() {
+  state.livekitRoom?.startAudio?.().catch((error) => console.warn("Failed to resume LiveKit audio", error));
+  els.remoteAudio.querySelectorAll("audio").forEach((audio) => {
+    audio.play?.().catch(() => {});
+  });
+}
+
+document.addEventListener("click", resumeLiveKitAudio);
+document.addEventListener("touchend", resumeLiveKitAudio);
 
 els.toggleSoupBtn.addEventListener("click", () => {
   const collapsed = els.soupText.classList.toggle("collapsed");
