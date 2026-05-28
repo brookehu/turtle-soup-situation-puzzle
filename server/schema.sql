@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS rooms (
   id TEXT PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
+  original_code TEXT,
   name TEXT NOT NULL,
   soup_title TEXT NOT NULL,
   soup_text TEXT NOT NULL,
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   san_max INTEGER NOT NULL DEFAULT 100,
   max_members INTEGER NOT NULL DEFAULT 10,
   locked INTEGER NOT NULL DEFAULT 0,
+  deleted_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (host_id) REFERENCES users(id)
 );

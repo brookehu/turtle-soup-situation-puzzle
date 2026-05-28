@@ -12,8 +12,12 @@ import { AccessToken } from "livekit-server-sdk";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
+const publicDir = path.join(rootDir, "public");
 const port = Number(process.env.PORT || 3000);
 const dbPath = path.resolve(rootDir, process.env.DATABASE_PATH || "./data/turtle.db");
+const corsOrigin = process.env.CORS_ORIGIN || "";
+const testRoomCodes = new Set(String(process.env.TEST_ROOM_CODES || "TS2048").split(",").map((code) => code.trim().toUpperCase()).filter(Boolean));
+const emptyRoomTtlMs = Number(process.env.EMPTY_ROOM_TTL_MS || 12 * 60 * 60 * 1000);
 const livekitUrl = process.env.LIVEKIT_URL || "ws://localhost:7880";
 const publicLivekitUrl = process.env.PUBLIC_LIVEKIT_URL || "";
 const livekitApiKey = process.env.LIVEKIT_API_KEY || "devkey";
@@ -21,6 +25,15 @@ const livekitApiSecret = process.env.LIVEKIT_API_SECRET || "secret";
 const hostPassword = process.env.HOST_PASSWORD || "host2026";
 const playerPassword = process.env.PLAYER_PASSWORD || "soup2026";
 const adminPassword = process.env.ADMIN_PASSWORD || "admin2026";
+
+if (
+  process.env.NODE_ENV === "production" &&
+  [hostPassword, playerPassword, adminPassword].some((password) =>
+    ["host2026", "soup2026", "admin2026"].includes(password) || password.startsWith("change-"),
+  )
+) {
+  throw new Error("生产环境必须通过环境变量设置非默认 HOST_PASSWORD、PLAYER_PASSWORD 和 ADMIN_PASSWORD。");
+}
 
 const answerMap = {
   是: "YES",
@@ -52,7 +65,11 @@ const scoreMap = {
 };
 
 const disconnectTimers = new Map();
+const roomArchiveTimers = new Map();
+const fleetFailures = new Map();
 const disconnectGraceMs = Number(process.env.DISCONNECT_GRACE_MS || 12000);
+const fleetWindowMs = Number(process.env.FLEET_RATE_WINDOW_MS || 60_000);
+const fleetMaxFailures = Number(process.env.FLEET_RATE_MAX_FAILURES || 5);
 
 const defaultSoup = {
   title: "雨夜车站",
@@ -69,18 +86,41 @@ migrate();
 
 const app = express();
 const httpServer = createServer(app);
+const allowedOrigins = corsOrigin
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 const io = new Server(httpServer, {
   cors: {
-    origin: "*",
+    origin: allowedOrigins.includes("*") ? "*" : allowedOrigins.length ? allowedOrigins : false,
     methods: ["GET", "POST"],
   },
 });
 
 app.set("trust proxy", true);
-app.use(cors());
+app.disable("x-powered-by");
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "same-origin");
+  res.setHeader("X-Frame-Options", "DENY");
+  next();
+});
+if (allowedOrigins.length) {
+  app.use(
+    cors({
+      origin(origin, callback) {
+        if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+          callback(null, true);
+          return;
+        }
+        callback(new Error("CORS origin not allowed."));
+      },
+    }),
+  );
+}
 app.use(express.json());
-app.use(express.static(rootDir));
 app.use("/vendor/livekit", express.static(path.join(rootDir, "node_modules/livekit-client/dist")));
+app.use(express.static(publicDir, { index: "index.html", dotfiles: "deny" }));
 
 function id(prefix) {
   return `${prefix}_${crypto.randomBytes(8).toString("hex")}`;
@@ -127,6 +167,13 @@ function migrate() {
   if (!columns.includes("locked")) {
     db.exec("ALTER TABLE rooms ADD COLUMN locked INTEGER NOT NULL DEFAULT 0");
   }
+  if (!columns.includes("original_code")) {
+    db.exec("ALTER TABLE rooms ADD COLUMN original_code TEXT");
+  }
+  if (!columns.includes("deleted_at")) {
+    db.exec("ALTER TABLE rooms ADD COLUMN deleted_at TEXT");
+  }
+  db.exec("UPDATE rooms SET original_code = code WHERE original_code IS NULL");
 
   const playerColumns = db.prepare("PRAGMA table_info(room_players)").all().map((column) => column.name);
   if (!playerColumns.includes("voice_blocked")) {
@@ -180,7 +227,7 @@ function migrate() {
 }
 
 function findAvatarUrl(name) {
-  const avatarDir = path.join(rootDir, "assets", "avatars");
+  const avatarDir = path.join(publicDir, "assets", "avatars");
   const safeName = normalizeName(name).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "").trim();
   const extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"];
 
@@ -189,6 +236,24 @@ function findAvatarUrl(name) {
     if (fs.existsSync(path.join(avatarDir, filename))) {
       return `/assets/avatars/${encodeURIComponent(filename)}`;
     }
+  }
+
+  try {
+    const numberedAvatars = fs
+      .readdirSync(avatarDir)
+      .map((filename) => {
+        const match = /^(\d+)\.(png|jpe?g|webp|gif|svg)$/i.exec(filename);
+        return match ? { filename, number: Number(match[1]) } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.number - b.number);
+    if (numberedAvatars.length) {
+      const sum = [...safeName].reduce((total, char) => total + char.codePointAt(0), 0);
+      const picked = numberedAvatars[sum % numberedAvatars.length];
+      return `/assets/avatars/${encodeURIComponent(picked.filename)}`;
+    }
+  } catch {
+    return "/assets/avatars/default.svg";
   }
 
   return "/assets/avatars/default.svg";
@@ -238,7 +303,9 @@ function updateNickname(userId, nickname, clientId = "", admin = null) {
 }
 
 function getRoomByCode(code) {
-  return db.prepare("SELECT * FROM rooms WHERE code = ?").get(String(code || "").trim().toUpperCase());
+  return db
+    .prepare("SELECT * FROM rooms WHERE code = ? AND deleted_at IS NULL")
+    .get(String(code || "").trim().toUpperCase());
 }
 
 function getRoomMembers(roomId) {
@@ -421,6 +488,97 @@ function clearDisconnectTimer(roomId, userId) {
   disconnectTimers.delete(key);
 }
 
+function isTestRoom(room) {
+  const code = String(room?.original_code || room?.code || "").toUpperCase();
+  return testRoomCodes.has(code);
+}
+
+function activeManagerCount(roomId) {
+  return db
+    .prepare(
+      `SELECT COUNT(*) AS count
+       FROM room_players
+       JOIN users ON users.id = room_players.user_id
+       WHERE room_players.room_id = ?
+         AND room_players.left_at IS NULL
+         AND room_players.online = 1
+         AND (room_players.role = 'host' OR users.is_admin = 1)`,
+    )
+    .get(roomId).count;
+}
+
+function clearRoomArchiveTimer(roomId) {
+  const timer = roomArchiveTimers.get(roomId);
+  if (!timer) return;
+  clearTimeout(timer);
+  roomArchiveTimers.delete(roomId);
+}
+
+function archiveRoom(roomId) {
+  const room = db.prepare("SELECT * FROM rooms WHERE id = ?").get(roomId);
+  if (!room || room.deleted_at || isTestRoom(room) || activeManagerCount(roomId) > 0) return;
+  const originalCode = room.original_code || room.code;
+  const archivedCode = `${originalCode}#${room.id.slice(-8)}`;
+  db.prepare(
+    `UPDATE rooms
+     SET original_code = ?, code = ?, status = 'archived', deleted_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND deleted_at IS NULL`,
+  ).run(originalCode, archivedCode, room.id);
+  db.prepare("UPDATE room_players SET online = 0, left_at = CURRENT_TIMESTAMP WHERE room_id = ? AND left_at IS NULL").run(
+    room.id,
+  );
+  io.to(room.id).emit("room_archived");
+  for (const targetSocket of io.sockets.sockets.values()) {
+    if (targetSocket.data.room?.id === room.id) targetSocket.disconnect(true);
+  }
+}
+
+function scheduleRoomArchive(roomId) {
+  clearRoomArchiveTimer(roomId);
+  const room = db.prepare("SELECT * FROM rooms WHERE id = ?").get(roomId);
+  if (!room || room.deleted_at || isTestRoom(room) || activeManagerCount(roomId) > 0) return;
+  roomArchiveTimers.set(
+    roomId,
+    setTimeout(() => {
+      roomArchiveTimers.delete(roomId);
+      archiveRoom(roomId);
+    }, emptyRoomTtlMs),
+  );
+}
+
+function parseSqlTime(value) {
+  if (!value) return 0;
+  return new Date(`${String(value).replace(" ", "T")}Z`).getTime() || 0;
+}
+
+function scheduleExistingRoomArchives() {
+  const rooms = db.prepare("SELECT * FROM rooms WHERE deleted_at IS NULL").all();
+  for (const room of rooms) {
+    if (isTestRoom(room) || activeManagerCount(room.id) > 0) continue;
+    const lastSeen = db
+      .prepare(
+        `SELECT MAX(COALESCE(room_players.left_at, room_players.joined_at, rooms.created_at)) AS value
+         FROM rooms
+         LEFT JOIN room_players ON room_players.room_id = rooms.id
+         LEFT JOIN users ON users.id = room_players.user_id
+         WHERE rooms.id = ? AND (room_players.role = 'host' OR users.is_admin = 1)`,
+      )
+      .get(room.id).value;
+    const elapsed = Date.now() - (parseSqlTime(lastSeen) || parseSqlTime(room.created_at) || Date.now());
+    if (elapsed >= emptyRoomTtlMs) {
+      archiveRoom(room.id);
+      continue;
+    }
+    roomArchiveTimers.set(
+      room.id,
+      setTimeout(() => {
+        roomArchiveTimers.delete(room.id);
+        archiveRoom(room.id);
+      }, emptyRoomTtlMs - elapsed),
+    );
+  }
+}
+
 function retireUserFromRooms(userId) {
   const rows = db
     .prepare("SELECT room_id FROM room_players WHERE user_id = ? AND left_at IS NULL")
@@ -437,6 +595,7 @@ function retireUserFromRooms(userId) {
   for (const row of rows) {
     clearDisconnectTimer(row.room_id, userId);
     emitRoomState(row.room_id);
+    scheduleRoomArchive(row.room_id);
   }
 }
 
@@ -464,6 +623,7 @@ function scheduleDisconnectCleanup(roomId, userId) {
         userId,
       );
       emitRoomState(roomId);
+      scheduleRoomArchive(roomId);
     }, disconnectGraceMs),
   );
 }
@@ -480,11 +640,35 @@ function getRoomHostName(roomId) {
   return host?.nickname || "主持人";
 }
 
+function createQuestion({ roomId, user, content }) {
+  const questionId = id("q");
+  db.prepare("INSERT INTO questions (id, room_id, player_id, question) VALUES (?, ?, ?, ?)").run(
+    questionId,
+    roomId,
+    user.id,
+    content,
+  );
+  createChatMessage({
+    roomId,
+    userId: user.id,
+    message: `@${getRoomHostName(roomId)} ${content}`,
+    kind: "question",
+    questionId,
+  });
+  io.to(roomId).emit("question_submit", {
+    id: questionId,
+    content,
+    playerId: user.id,
+    playerName: user.nickname,
+    createdAt: new Date().toISOString(),
+  });
+}
+
 function getAdminRoomList() {
   return db
     .prepare(
-      `SELECT rooms.id, rooms.code, rooms.name, rooms.soup_title, rooms.san_value, rooms.san_max,
-              rooms.max_members, rooms.locked, rooms.status, rooms.created_at,
+      `SELECT rooms.id, rooms.code, rooms.original_code, rooms.name, rooms.soup_title, rooms.san_value, rooms.san_max,
+              rooms.max_members, rooms.locked, rooms.status, rooms.deleted_at, rooms.created_at,
               host.nickname AS host_name,
               COUNT(room_players.user_id) AS member_count,
               SUM(CASE WHEN room_players.online = 1 AND room_players.left_at IS NULL THEN 1 ELSE 0 END) AS online_count,
@@ -499,7 +683,8 @@ function getAdminRoomList() {
     .all()
     .map((room) => ({
       id: room.id,
-      code: room.code,
+      code: room.deleted_at ? room.original_code || room.code : room.code,
+      active: !room.deleted_at,
       name: room.name,
       soupTitle: room.soup_title,
       hostName: room.host_name || "无",
@@ -508,6 +693,7 @@ function getAdminRoomList() {
       maxMembers: room.max_members,
       locked: Boolean(room.locked),
       status: room.status,
+      deletedAt: room.deleted_at,
       memberCount: room.member_count || 0,
       onlineCount: room.online_count || 0,
       questionCount: room.question_count || 0,
@@ -542,6 +728,33 @@ function clampInt(value, fallback, min, max) {
   const number = Number.parseInt(value, 10);
   if (!Number.isFinite(number)) return fallback;
   return Math.min(max, Math.max(min, number));
+}
+
+function fleetRateKey(req) {
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
+
+function isFleetRateLimited(req) {
+  const key = fleetRateKey(req);
+  const now = Date.now();
+  const record = fleetFailures.get(key);
+  if (!record || now - record.startedAt >= fleetWindowMs) return false;
+  return record.count >= fleetMaxFailures;
+}
+
+function registerFleetFailure(req) {
+  const key = fleetRateKey(req);
+  const now = Date.now();
+  const record = fleetFailures.get(key);
+  if (!record || now - record.startedAt >= fleetWindowMs) {
+    fleetFailures.set(key, { count: 1, startedAt: now });
+    return;
+  }
+  record.count += 1;
+}
+
+function clearFleetFailures(req) {
+  fleetFailures.delete(fleetRateKey(req));
 }
 
 function requireSession(req, res, next) {
@@ -597,12 +810,18 @@ app.get("/api/health", (_req, res) => {
 
 app.post("/api/fleet/verify", (req, res) => {
   const { password, nickname, userId, clientId } = req.body;
+  if (isFleetRateLimited(req)) {
+    res.status(429).json({ error: "密码尝试过于频繁，请 1 分钟后再试。" });
+    return;
+  }
   const role = password === adminPassword ? "admin" : password === hostPassword ? "host" : password === playerPassword ? "player" : null;
 
   if (!role) {
+    registerFleetFailure(req);
     res.status(401).json({ error: "车队密码不正确。" });
     return;
   }
+  clearFleetFailures(req);
 
   const dbRole = role === "admin" ? "host" : role;
   const admin = role === "admin";
@@ -678,10 +897,11 @@ app.post("/api/rooms", (req, res) => {
   };
 
   db.prepare(
-    `INSERT INTO rooms (id, code, name, soup_title, soup_text, answer_text, host_id, san_value, san_max, max_members, locked)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO rooms (id, code, original_code, name, soup_title, soup_text, answer_text, host_id, san_value, san_max, max_members, locked)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     room.id,
+    room.code,
     room.code,
     room.name,
     room.soupTitle,
@@ -721,19 +941,57 @@ app.get("/api/admin/rooms", (req, res) => {
   res.json({ rooms: getAdminRoomList() });
 });
 
+app.post("/api/admin/rooms/:roomId/archive", (req, res) => {
+  const user = req.body?.userId ? db.prepare("SELECT * FROM users WHERE id = ?").get(req.body.userId) : null;
+  const room = db.prepare("SELECT * FROM rooms WHERE id = ?").get(String(req.params.roomId || ""));
+  if (!user || !isAdmin(user)) {
+    res.status(403).json({ error: "只有管理员可以归档房间。" });
+    return;
+  }
+  if (!room || room.deleted_at) {
+    res.status(404).json({ error: "房间不存在或已归档。" });
+    return;
+  }
+  if (isTestRoom(room)) {
+    res.status(409).json({ error: "测试房间不能归档。" });
+    return;
+  }
+  clearRoomArchiveTimer(room.id);
+  const originalCode = room.original_code || room.code;
+  const archivedCode = `${originalCode}#${room.id.slice(-8)}`;
+  db.prepare(
+    `UPDATE rooms
+     SET original_code = ?, code = ?, status = 'archived', deleted_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND deleted_at IS NULL`,
+  ).run(originalCode, archivedCode, room.id);
+  db.prepare("UPDATE room_players SET online = 0, left_at = CURRENT_TIMESTAMP WHERE room_id = ? AND left_at IS NULL").run(
+    room.id,
+  );
+  io.to(room.id).emit("room_archived");
+  for (const targetSocket of io.sockets.sockets.values()) {
+    if (targetSocket.data.room?.id === room.id) targetSocket.disconnect(true);
+  }
+  res.json({ ok: true, rooms: getAdminRoomList() });
+});
+
 app.post("/api/rooms/:code/join", (req, res) => {
   const { userId, nickname, clientId } = req.body;
   const room = getRoomByCode(req.params.code);
   let user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
 
-  if (!room || !user) {
-    res.status(404).json({ error: "用户或房间不存在。" });
+  if (!room) {
+    res.status(404).json({ error: "房间不存在。" });
+    return;
+  }
+  if (!user) {
+    res.status(404).json({ error: "用户不存在，请重新登录。" });
     return;
   }
 
   user = updateNickname(user.id, nickname || user.nickname, clientId);
   retireOtherClientUsers(clientId, user.id);
   clearDisconnectTimer(room.id, user.id);
+  clearRoomArchiveTimer(room.id);
   const existingMember = db
     .prepare("SELECT * FROM room_players WHERE room_id = ? AND user_id = ? AND left_at IS NULL")
     .get(room.id, user.id);
@@ -779,6 +1037,7 @@ app.post("/api/rooms/:code/leave", (req, res) => {
     "UPDATE room_players SET online = 0, left_at = CURRENT_TIMESTAMP WHERE room_id = ? AND user_id = ?",
   ).run(room.id, user.id);
   emitRoomState(room.id);
+  scheduleRoomArchive(room.id);
   res.json({ ok: true });
 });
 
@@ -891,6 +1150,7 @@ io.on("connection", (socket) => {
   socket.join(room.id);
 
   clearDisconnectTimer(room.id, user.id);
+  if (canManage(user)) clearRoomArchiveTimer(room.id);
   db.prepare("UPDATE room_players SET online = 1, left_at = NULL WHERE room_id = ? AND user_id = ?").run(room.id, user.id);
   db.prepare("INSERT INTO voice_logs (id, room_id, user_id, event) VALUES (?, ?, ?, ?)").run(
     id("vl"),
@@ -909,34 +1169,42 @@ io.on("connection", (socket) => {
     const message = String(payload.text || payload.message || "").trim().slice(0, 1000);
     if (!message) return;
 
+    const hostMention = /^@主持(?:人)?\s+(.+)/.exec(message);
+    if (hostMention && !isAdmin(user)) {
+      const content = hostMention[1].trim();
+      if (content) createQuestion({ roomId: room.id, user, content });
+      return;
+    }
+
     createChatMessage({ roomId: room.id, userId: user.id, message });
+  });
+
+  socket.on("chat_pat", (payload = {}) => {
+    const targetId = String(payload.playerId || payload.userId || "");
+    if (!targetId || targetId === user.id) return;
+    const target = db
+      .prepare(
+        `SELECT users.nickname
+         FROM room_players
+         JOIN users ON users.id = room_players.user_id
+         WHERE room_players.room_id = ? AND room_players.user_id = ? AND room_players.left_at IS NULL`,
+      )
+      .get(room.id, targetId);
+    if (!target) return;
+    createChatMessage({
+      roomId: room.id,
+      userId: user.id,
+      message: `拍了拍 ${target.nickname}`,
+      kind: "pat",
+      replyToName: target.nickname,
+    });
   });
 
   socket.on("question_submit", (payload = {}) => {
     const content = String(payload.content || "").trim().slice(0, 1000);
     if (!content) return;
 
-    const questionId = id("q");
-    db.prepare("INSERT INTO questions (id, room_id, player_id, question) VALUES (?, ?, ?, ?)").run(
-      questionId,
-      room.id,
-      user.id,
-      content,
-    );
-    createChatMessage({
-      roomId: room.id,
-      userId: user.id,
-      message: `@${getRoomHostName(room.id)} ${content}`,
-      kind: "question",
-      questionId,
-    });
-    io.to(room.id).emit("question_submit", {
-      id: questionId,
-      content,
-      playerId: user.id,
-      playerName: user.nickname,
-      createdAt: new Date().toISOString(),
-    });
+    createQuestion({ roomId: room.id, user, content });
   });
 
   socket.on("question_result", (payload = {}) => {
@@ -1165,9 +1433,14 @@ io.on("connection", (socket) => {
     const targetId = String(payload.playerId || "");
     if (!targetId || targetId === user.id) return;
     const target = db
-      .prepare("SELECT * FROM room_players WHERE room_id = ? AND user_id = ? AND left_at IS NULL")
+      .prepare(
+        `SELECT room_players.*, users.is_admin
+         FROM room_players
+         JOIN users ON users.id = room_players.user_id
+         WHERE room_players.room_id = ? AND room_players.user_id = ? AND room_players.left_at IS NULL`,
+      )
       .get(room.id, targetId);
-    if (!target || target.role === "host") return;
+    if (!target || target.is_admin || (target.role === "host" && !isAdmin(user))) return;
 
     const blocked = payload.blocked ? 1 : 0;
     const muted = blocked ? 1 : target.muted ? 1 : 0;
@@ -1193,9 +1466,14 @@ io.on("connection", (socket) => {
     const targetId = String(payload.playerId || "");
     if (!targetId || targetId === user.id) return;
     const target = db
-      .prepare("SELECT * FROM room_players WHERE room_id = ? AND user_id = ? AND left_at IS NULL")
+      .prepare(
+        `SELECT room_players.*, users.is_admin
+         FROM room_players
+         JOIN users ON users.id = room_players.user_id
+         WHERE room_players.room_id = ? AND room_players.user_id = ? AND room_players.left_at IS NULL`,
+      )
       .get(room.id, targetId);
-    if (!target || target.role === "host") return;
+    if (!target || target.is_admin || (target.role === "host" && !isAdmin(user))) return;
 
     clearDisconnectTimer(room.id, targetId);
     db.prepare(
@@ -1234,11 +1512,13 @@ io.on("connection", (socket) => {
     );
     io.to(room.id).emit("player_leave", { userId: user.id, name: user.nickname });
     scheduleDisconnectCleanup(room.id, user.id);
+    scheduleRoomArchive(room.id);
     emitRoomState(room.id);
   });
 });
 
 httpServer.listen(port, () => {
+  scheduleExistingRoomArchives();
   console.log(`Turtle Soup server: http://localhost:${port}`);
   console.log(`LiveKit URL: ${livekitUrl}`);
 });

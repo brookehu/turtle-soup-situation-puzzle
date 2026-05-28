@@ -1,8 +1,28 @@
 services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: 3000
+      DATABASE_PATH: /app/data/turtle.db
+      LIVEKIT_URL: ws://livekit:7880
+    ports:
+      - "3000:3000"
+    volumes:
+      - turtle-data:/app/data
+    depends_on:
+      - livekit
+
   livekit:
     image: livekit/livekit-server:latest
+    restart: unless-stopped
     command: --dev --bind 0.0.0.0
     ports:
       - "7880:7880"
       - "7881:7881"
       - "7882:7882/udp"
+
+volumes:
+  turtle-data:

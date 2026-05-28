@@ -8,7 +8,7 @@
     "dev": "node --watch server/index.js",
     "livekit": "docker compose up -d livekit",
     "livekit:stop": "docker compose stop livekit",
-    "check": "node --check server/index.js && node --check script.js"
+    "check": "node --check server/index.js && node --check public/script.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

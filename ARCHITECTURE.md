@@ -1,134 +1,104 @@
-# 海龟汤车队架构草案
+# Architecture
 
-## 分层
+## Public Boundary
 
-当前实现已落在 `server/index.js`。登录/大厅层走 REST API：
+Only `public/` is served by Express:
 
-- `POST /api/fleet/verify`：验证车队密码，返回身份、用户信息、短期 token
-- `POST /api/rooms`：创建房间
-- `GET /api/rooms/:code`：验证房间是否存在
-- `POST /api/rooms/:code/join`：加入房间并返回初始 `room_state`
-- `POST /api/livekit/token`：签发 LiveKit 入会 token
+- `public/index.html`
+- `public/script.js`
+- `public/styles.css`
+- `public/assets/**`
 
-游戏实时层走 Socket：
+The project root is not a static directory. `server/`, `data/`, `.env`, logs, README files and Docker metadata are not exposed over HTTP.
 
-- `room_state`
-- `chat_message`
-- `voice_status`
-- `san_update`
-- `question_submit`
-- `question_result`
-- `host_hint`
-- `player_join`
-- `player_leave`
-- `mute_status`
+## Server
 
-语音层使用 LiveKit SFU。4 到 10 人通话不建议 P2P Mesh，连接数和上行带宽会增长过快。
+`server/index.js` owns:
 
-## Socket 消息
+- HTTP API
+- Socket.IO events
+- SQLite migrations
+- LiveKit token creation
+- password verification and rate limiting
+- room archival timers
 
-玩家提问：
+`server/schema.sql` defines fresh-database schema. Runtime migrations in `server/index.js` keep older local databases compatible.
 
-```json
-{
-  "event": "question_submit",
-  "content": "他是自杀吗？",
-  "playerId": "u102"
-}
-```
+## Data Model
 
-主持判定：
+Important tables:
 
-```json
-{
-  "event": "question_result",
-  "questionId": "q901",
-  "result": "MAYBE",
-  "sanCost": 2
-}
-```
+- `users`: account/session identity, including `is_admin`.
+- `rooms`: active and archived rooms. `original_code` preserves the original room code; `deleted_at` marks archived rooms.
+- `room_players`: membership, role in room, online state, voice state.
+- `questions` and `question_results`: question history and host judgements.
+- `chat_messages`: complete chat history.
+- `progress_nodes`: host-managed story checkpoints.
+- `voice_logs`: voice state audit trail.
 
-SAN 同步：
+Room archival is soft-delete only. History remains queryable by admins and in database backups.
 
-```json
-{
-  "event": "san_update",
-  "roomId": "r2048",
-  "value": 98
-}
-```
+## Access Control
 
-## 数据表
+Passwords are checked only by `POST /api/fleet/verify`.
 
-`users`
+Roles:
 
-- `id`
-- `nickname`
-- `role`
-- `created_at`
+- `player`: normal player.
+- `host`: room host.
+- `admin`: represented internally as a host user with `is_admin = 1`; admins can inspect every room and have host-level powers after entering.
 
-`rooms`
+Host-level operations call `canManage(user)`.
 
-- `id`
-- `code`
-- `name`
-- `password_hash`
-- `host_id`
-- `status`
-- `created_at`
+Admins have a stronger moderation path than hosts:
 
-`room_players`
+- host can manage players.
+- admin can manage players and hosts.
+- admin cannot manage another admin.
 
-- `room_id`
-- `user_id`
-- `role`
-- `muted`
-- `joined_at`
-- `left_at`
+## Rate Limiting
 
-`game_sessions`
+`POST /api/fleet/verify` tracks failed password attempts by IP in memory:
 
-- `id`
-- `room_id`
-- `san_value`
-- `started_at`
-- `ended_at`
+- default window: `FLEET_RATE_WINDOW_MS=60000`
+- default failures: `FLEET_RATE_MAX_FAILURES=5`
 
-`questions`
+Successful verification clears the failure counter.
 
-- `id`
-- `room_id`
-- `player_id`
-- `question`
-- `created_at`
+## Room Lifecycle
 
-`question_results`
+When a room has no online host/admin:
 
-- `id`
-- `question_id`
-- `host_id`
-- `result`
-- `san_cost`
-- `hint`
-- `created_at`
+1. `scheduleRoomArchive(roomId)` starts a timer.
+2. If a host/admin returns before `EMPTY_ROOM_TTL_MS`, the timer is cleared.
+3. If the timer expires, `archiveRoom(roomId)` sets `deleted_at`, preserves `original_code`, changes `code` to an internal archived code, and disconnects active sockets.
 
-`chat_messages`
+`TEST_ROOM_CODES` skips archival for demo rooms such as `TS2048`.
 
-- `id`
-- `room_id`
-- `user_id`
-- `message`
-- `created_at`
+Admins can also archive a room manually through `POST /api/admin/rooms/:roomId/archive`.
 
-`voice_logs` 可选，只记录连接、静音、断开等事件，不保存语音内容。
+## Chat Commands
 
-## 枚举
+`chat_message` treats messages beginning with `@主持 ` or `@主持人 ` as questions, unless the sender is an admin. The server creates a `questions` row, emits `question_submit`, and stores a `chat_messages` row with `kind = 'question'`.
 
-```ts
-enum Answer {
-  YES = "是",
-  NO = "不是",
-  MAYBE = "是也不是",
-  IRRELEVANT = "不重要"
-}
-```
+`chat_pat` stores a `chat_messages` row with `kind = 'pat'`.
+
+## Avatars
+
+Avatar lookup order:
+
+1. exact player-name file in `public/assets/avatars`
+2. numeric default avatar files sorted by number
+3. `default.svg`
+
+The numeric default selection is deterministic by player name, so the same name gets the same fallback avatar.
+
+## Docker
+
+The Docker image copies only:
+
+- `server/`
+- `public/`
+- `package*.json`
+
+The SQLite database lives in `/app/data`, mounted by the `turtle-data` volume in `docker-compose.yml`.
