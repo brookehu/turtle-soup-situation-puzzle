@@ -54,6 +54,8 @@ docker compose up -d --build
 
 公网部署时建议放在反向代理后面，并启用 HTTPS/WSS。
 
+房间默认最大成员数为 6。房间人数上限小于等于 6 时，前端会让 LiveKit 使用更轻量的单 PeerConnection 模式；连接失败时会自动用 relay/TURN 策略重试一次。LiveKit 仍然是 SFU 架构，不是浏览器点对点房间库。
+
 ## 公网语音部署
 
 LiveKit 分两层连接：
@@ -122,6 +124,10 @@ LIVEKIT_TURN_ENABLED=true
 LIVEKIT_TURN_DOMAIN=你的语音域名
 LIVEKIT_TURN_EXTERNAL_TLS=false
 
+AI_API_URL=
+AI_API_KEY=
+AI_MODEL=
+
 CORS_ORIGIN=
 DISCONNECT_GRACE_MS=12000
 EMPTY_ROOM_TTL_MS=43200000
@@ -136,6 +142,7 @@ FLEET_RATE_MAX_FAILURES=5
 - `EMPTY_ROOM_TTL_MS` 默认 12 小时。房间内没有在线主持/管理员后开始倒计时，归档后释放房间号。
 - `TEST_ROOM_CODES` 中的房间号不会被自动归档。
 - 初始密码界面按 IP 限制失败次数，默认每分钟最多 5 次；输入正确不会计入失败次数。
+- `AI_API_URL` 需兼容 OpenAI Chat Completions。未配置时，AI 测试成员仍可创建，但 AI 生成汤面/关键节点会返回配置错误。
 
 ## 房间归档
 

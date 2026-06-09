@@ -16,6 +16,7 @@ const state = {
   adminRooms: [],
   adminRoomFilter: "occupied",
   compactResults: false,
+  aiModalMode: "",
 };
 
 const savedSessionKey = "turtleSoupSession";
@@ -50,6 +51,11 @@ const els = {
   voiceStatus: document.querySelector("#voiceStatus"),
   sanSummary: document.querySelector("#sanSummary"),
   memberList: document.querySelector("#memberList"),
+  profileForm: document.querySelector("#profileForm"),
+  profileNameInput: document.querySelector("#profileNameInput"),
+  aiMemberActions: document.querySelector("#aiMemberActions"),
+  addAiHostBtn: document.querySelector("#addAiHostBtn"),
+  addAiPlayerBtn: document.querySelector("#addAiPlayerBtn"),
   roomSettingsPanel: document.querySelector("#roomSettingsPanel"),
   roomSettingsForm: document.querySelector("#roomSettingsForm"),
   settingsRoomNameInput: document.querySelector("#settingsRoomNameInput"),
@@ -57,6 +63,8 @@ const els = {
   settingsSanMaxInput: document.querySelector("#settingsSanMaxInput"),
   settingsSanValueInput: document.querySelector("#settingsSanValueInput"),
   settingsLockedInput: document.querySelector("#settingsLockedInput"),
+  settingsVoiceEnabledInput: document.querySelector("#settingsVoiceEnabledInput"),
+  settingsGameTypeInput: document.querySelector("#settingsGameTypeInput"),
   resetGameBtn: document.querySelector("#resetGameBtn"),
   leaveRoomBtn: document.querySelector("#leaveRoomBtn"),
   enterGameBtn: document.querySelector("#enterGameBtn"),
@@ -99,12 +107,22 @@ const els = {
   hostSoupInput: document.querySelector("#hostSoupInput"),
   hostAnswerInput: document.querySelector("#hostAnswerInput"),
   saveSoupBtn: document.querySelector("#saveSoupBtn"),
+  generateSoupBtn: document.querySelector("#generateSoupBtn"),
   revealAnswerBtn: document.querySelector("#revealAnswerBtn"),
   progressForm: document.querySelector("#progressForm"),
   progressInput: document.querySelector("#progressInput"),
+  generateProgressBtn: document.querySelector("#generateProgressBtn"),
   hostProgressList: document.querySelector("#hostProgressList"),
   leaderboardList: document.querySelector("#leaderboardList"),
   voicePanel: document.querySelector(".voice-panel"),
+  aiModal: document.querySelector("#aiModal"),
+  aiModalTitle: document.querySelector("#aiModalTitle"),
+  aiModalLabel: document.querySelector("#aiModalLabel"),
+  aiModalInput: document.querySelector("#aiModalInput"),
+  aiModalNumber: document.querySelector("#aiModalNumber"),
+  aiModalWarning: document.querySelector("#aiModalWarning"),
+  aiModalCancelBtn: document.querySelector("#aiModalCancelBtn"),
+  aiModalConfirmBtn: document.querySelector("#aiModalConfirmBtn"),
 };
 
 async function api(path, options = {}) {
@@ -127,6 +145,14 @@ function showView(view) {
   syncLobbyPanels();
   els.adminRoomsPanel.classList.toggle("hidden", state.role !== "admin");
   if (view !== "game") clearSanMood();
+}
+
+function setActivePanel(panel = "chat") {
+  const nextPanel = panel === "manage" && !canManageRoom() ? "chat" : panel || "chat";
+  els.gameView.dataset.activePanel = nextPanel;
+  els.mobileTabs.forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.panel === nextPanel);
+  });
 }
 
 function roleName(role) {
@@ -159,8 +185,10 @@ function normalizeRoom(room) {
     progressNodes: room.progressNodes || [],
     leaderboard: room.leaderboard || [],
     sanMax: room.sanMax || 100,
-    maxMembers: room.maxMembers || 10,
+    maxMembers: room.maxMembers || 6,
     locked: Boolean(room.locked),
+    voiceEnabled: room.voiceEnabled !== false,
+    gameType: room.gameType || "turtle",
     soupTitle: room.soupTitle || "雨夜车站",
     answerText: room.answerText || "",
     answerRevealed: Boolean(room.answerRevealed),
@@ -253,6 +281,13 @@ async function restoreSession() {
 
     if (session.room) {
       enterRoom(session.room, state.nickname);
+      if (location.pathname === "/turtle") {
+        connectSocket();
+        setActivePanel("chat");
+        renderGame();
+        showView("game");
+        if (state.room.voiceEnabled !== false) connectLiveKit().catch((error) => console.warn(error));
+      }
     } else {
       renderLobbyRoom();
       saveSession();
@@ -284,7 +319,7 @@ function renderLobbyRoom() {
     syncLobbyPanels();
     els.roomTitle.textContent = "未进入房间";
     els.roomCodeBadge.textContent = "----";
-    els.memberCount.textContent = "0/10";
+    els.memberCount.textContent = "0/6";
     setVoiceStatus("待连接");
     els.sanSummary.textContent = "100";
     els.memberList.innerHTML = '<p class="empty-state">创建或加入房间后显示成员列表。</p>';
@@ -299,9 +334,14 @@ function renderLobbyRoom() {
   els.roomTitle.textContent = state.room.name;
   els.roomCodeBadge.textContent = state.room.code;
   els.memberCount.textContent = `${state.room.members.length}/${state.room.maxMembers}`;
-  setVoiceStatus(state.room.locked ? "已锁定" : "LiveKit SFU");
+  setVoiceStatus(!state.room.voiceEnabled ? "房间静音" : state.room.locked ? "已锁定" : "LiveKit SFU");
   els.sanSummary.textContent = `${state.san}/${state.room.sanMax}`;
+  if (document.activeElement !== els.profileNameInput) els.profileNameInput.value = state.user?.name || state.nickname || "";
   els.memberList.innerHTML = state.room.members.map(renderMemberCard).join("");
+  els.aiMemberActions.classList.toggle("hidden", !canManageRoom());
+  const hasAiHost = state.room.members.some((member) => member.isAi && isHostMember(member));
+  els.addAiPlayerBtn.disabled = canManageRoom() && !hasAiHost;
+  els.addAiPlayerBtn.title = hasAiHost ? "" : "请先创建 AI 主持";
   els.roomSettingsPanel.classList.toggle("hidden", !canManageRoom());
   syncRoomSettingsForm();
   els.enterGameBtn.disabled = false;
@@ -365,19 +405,31 @@ function syncRoomSettingsForm() {
   if (document.activeElement !== els.settingsSanMaxInput) els.settingsSanMaxInput.value = state.room.sanMax;
   if (document.activeElement !== els.settingsSanValueInput) els.settingsSanValueInput.value = state.san;
   els.settingsLockedInput.checked = state.room.locked;
+  els.settingsVoiceEnabledInput.checked = state.room.voiceEnabled !== false;
+  els.settingsGameTypeInput.value = state.room.gameType || "turtle";
 }
 
 function renderMemberCard(member) {
   const canKick = canManageMember(member);
+  const canManageAi = canManageAiMember(member);
+  const aiStatus = member.isAi ? (member.aiEnabled === false ? " · AI已关闭" : " · AI开启") : "";
   return `
     <article class="member-card ${isHostMember(member) ? "host-member" : ""}">
       ${renderAvatar(member)}
       <div>
-        <strong class="${memberNameClass(member)}">${escapeHtml(member.name)}</strong>
-        <span>${escapeHtml(memberStatusText(member))}</span>
+        <strong class="${memberNameClass(member)}">${escapeHtml(member.name)}${member.isAi ? " · AI" : ""}</strong>
+        <span>${escapeHtml(memberStatusText(member))}${escapeHtml(aiStatus)}</span>
       </div>
       <span class="status-dot" aria-label="${member.online ? "在线" : "离线"}"></span>
-      ${canKick ? `<button class="kick-btn" type="button" data-player-id="${escapeHtml(member.id)}">踢出</button>` : ""}
+      ${
+        canManageAi || canKick
+          ? `<div class="member-actions">
+              ${canManageAi ? `<button class="ai-rename-btn" type="button" data-player-id="${escapeHtml(member.id)}" data-name="${escapeHtml(member.name)}">改名</button>` : ""}
+              ${canManageAi ? `<button class="ai-toggle-btn" type="button" data-player-id="${escapeHtml(member.id)}" data-enabled="${member.aiEnabled !== false ? "true" : "false"}">${member.aiEnabled === false ? "开启" : "关闭"}</button>` : ""}
+              ${canKick ? `<button class="kick-btn" type="button" data-player-id="${escapeHtml(member.id)}">踢出</button>` : ""}
+            </div>`
+          : ""
+      }
     </article>
   `;
 }
@@ -390,7 +442,7 @@ function renderPlayerStrip() {
       (member) => `
         <div class="player-chip ${isHostMember(member) ? "host-member" : ""} ${member.id === state.user?.id ? "self-member" : ""}">
           ${renderAvatar(member)}
-          <span class="${memberNameClass(member)}">${escapeHtml(member.name)}</span>
+          <span class="${memberNameClass(member)}">${escapeHtml(member.name)}${member.isAi ? " · AI" : ""}</span>
           ${member.id === state.user?.id ? "<em>当前</em>" : ""}
         </div>
       `,
@@ -400,6 +452,7 @@ function renderPlayerStrip() {
 
 function renderGame() {
   if (!state.room) return;
+  if (!els.gameView.dataset.activePanel) setActivePanel("chat");
 
   els.gameRoomCode.textContent = state.room.code;
   els.gameRoomTitle.textContent = state.room.name;
@@ -411,6 +464,7 @@ function renderGame() {
   els.hostManagePanel.classList.toggle("hidden", !canManageRoom());
   els.questionForm.classList.toggle("host-hidden", canManageRoom());
   els.askBtn.textContent = canManageRoom() ? "记录问题" : "提问";
+  updateMuteButton();
   els.mobileTabs.forEach((button) => {
     if (button.dataset.hostOnly !== undefined) button.classList.toggle("hidden", !canManageRoom());
   });
@@ -441,19 +495,21 @@ function renderSan() {
   els.sanBar.style.width = `${Math.round(ratio * 100)}%`;
   els.sanBar.style.background = `linear-gradient(90deg, ${ratio > 0.55 ? "var(--green)" : ratio > 0.25 ? "var(--amber)" : "var(--red)"}, ${ratio > 0.55 ? "#86a943" : ratio > 0.25 ? "#d09a39" : "#401111"})`;
   els.sanSummary.textContent = `${state.san}/${sanMax}`;
-  document.body.classList.toggle("san-warning", ratio <= 0.3 && ratio > 0.2);
-  document.body.classList.toggle("san-danger", ratio <= 0.2 && ratio > 0.1);
-  document.body.classList.toggle("san-critical", ratio <= 0.1);
+  window.TurtleGame?.updateSanMood?.(ratio);
 }
 
 function clearSanMood() {
-  document.body.classList.remove("san-warning", "san-danger", "san-critical", "san-mood-off");
+  window.TurtleGame?.clearSanMood?.();
 }
 
 function renderVoice() {
   if (!state.room) return;
-  els.voicePanel.classList.toggle("hidden", !canManageRoom());
+  els.voicePanel.classList.toggle("hidden", !canManageRoom() || state.room.voiceEnabled === false);
   if (!canManageRoom()) return;
+  if (state.room.voiceEnabled === false) {
+    els.voiceList.innerHTML = '<p class="empty-state">当前房间未开启语音通话。</p>';
+    return;
+  }
 
   els.voiceList.innerHTML = state.room.members
     .map((member) => {
@@ -490,8 +546,13 @@ function isAdminMember(member) {
 
 function canManageMember(member) {
   if (!canManageRoom() || member.id === state.user?.id || isAdminMember(member)) return false;
+  if (member.isAi) return true;
   if (isHostMember(member) && state.role !== "admin") return false;
   return true;
+}
+
+function canManageAiMember(member) {
+  return Boolean(canManageRoom() && member.isAi && member.id !== state.user?.id);
 }
 
 function memberNameClass(member) {
@@ -688,8 +749,9 @@ function setSocketStatus(text) {
 
 function autoGrowTextarea(textarea) {
   if (!textarea) return;
-  textarea.style.height = "auto";
-  textarea.style.height = `${Math.min(textarea.scrollHeight, 132)}px`;
+  const minHeight = textarea === els.chatInput ? 42 : 0;
+  textarea.style.height = `${minHeight}px`;
+  textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minHeight), 132)}px`;
 }
 
 function mentionUser(name) {
@@ -854,6 +916,7 @@ async function leaveCurrentRoom() {
   saveSession();
   renderLobbyRoom();
   if (state.role === "admin") loadAdminRooms();
+  if (location.pathname === "/turtle") history.pushState({ view: "lobby" }, "", "/");
   showView("lobby");
 }
 
@@ -868,6 +931,11 @@ function applyRoomState(room) {
   if (currentMember) {
     state.muted = Boolean(currentMember.muted);
     updateMuteButton();
+    if (state.room.voiceEnabled === false && state.livekitRoom) {
+      state.livekitRoom.disconnect().catch((error) => console.warn(error));
+      state.livekitRoom = null;
+      state.muted = true;
+    }
     if (currentMember.voiceBlocked && state.livekitRoom) {
       state.livekitRoom.localParticipant.setMicrophoneEnabled(false).catch((error) => console.warn(error));
     }
@@ -891,6 +959,11 @@ function applyHostState(room) {
     if (currentMember) {
       state.muted = Boolean(currentMember.muted);
       updateMuteButton();
+      if (state.room.voiceEnabled === false && state.livekitRoom) {
+        state.livekitRoom.disconnect().catch((error) => console.warn(error));
+        state.livekitRoom = null;
+        state.muted = true;
+      }
       if (currentMember.voiceBlocked && state.livekitRoom) {
         state.livekitRoom.localParticipant.setMicrophoneEnabled(false).catch((error) => console.warn(error));
       }
@@ -933,6 +1006,10 @@ function applyVoiceBlock(playerId, blocked, muted) {
 }
 
 async function connectLiveKit() {
+  if (state.room?.voiceEnabled === false) {
+    setVoiceStatus("房间静音");
+    return;
+  }
   if (!window.LivekitClient) {
     setVoiceStatus("LiveKit客户端未加载", true);
     return;
@@ -948,9 +1025,28 @@ async function connectLiveKit() {
     body: "{}",
   });
 
+  let room = buildLiveKitRoom({ forceRelay: false });
+  try {
+    await connectLiveKitRoom(room, session, { forceRelay: false });
+  } catch (error) {
+    console.warn("LiveKit primary connect failed, retry with relay transport", error);
+    await room.disconnect().catch(() => {});
+    setVoiceStatus("语音重试中");
+    room = buildLiveKitRoom({ forceRelay: true });
+    await connectLiveKitRoom(room, session, { forceRelay: true });
+  }
+  state.livekitRoom = room;
+  setVoiceStatus("语音已连接");
+  updateMuteButton();
+}
+
+function buildLiveKitRoom() {
+  const { AudioPresets, Room, RoomEvent } = window.LivekitClient;
+  const smallRoom = (state.room?.maxMembers || 6) <= 6;
   const room = new Room({
     adaptiveStream: false,
     dynacast: false,
+    singlePeerConnection: smallRoom,
     audioCaptureDefaults: getAudioCaptureDefaults(),
     publishDefaults: {
       audioPreset: AudioPresets?.speech || { maxBitrate: 24000 },
@@ -994,7 +1090,23 @@ async function connectLiveKit() {
     track.detach().forEach((element) => element.remove());
   });
 
-  await room.connect(session.url, session.token);
+  return room;
+}
+
+async function connectLiveKitRoom(room, session, options = {}) {
+  await room.connect(session.url, session.token, {
+    autoSubscribe: true,
+    peerConnectionTimeout: options.forceRelay ? 18000 : 12000,
+    websocketTimeout: 12000,
+    maxRetries: 1,
+    ...(options.forceRelay
+      ? {
+          rtcConfig: {
+            iceTransportPolicy: "relay",
+          },
+        }
+      : {}),
+  });
   await room.startAudio?.().catch(() => {});
   room.remoteParticipants.forEach((participant) => {
     participant.trackPublications.forEach((publication) => {
@@ -1002,9 +1114,6 @@ async function connectLiveKit() {
     });
   });
   await room.localParticipant.setMicrophoneEnabled(false);
-  state.livekitRoom = room;
-  setVoiceStatus("语音已连接");
-  updateMuteButton();
 }
 
 function getAudioCaptureDefaults() {
@@ -1057,10 +1166,11 @@ function attachRemoteAudio(track) {
 }
 
 function updateMuteButton() {
+  const voiceDisabled = state.room?.voiceEnabled === false;
   const blocked = isCurrentUserVoiceBlocked();
-  els.muteBtn.textContent = blocked ? "已被禁言" : state.muted ? "取消静音" : "静音";
+  els.muteBtn.textContent = voiceDisabled ? "房间静音" : blocked ? "已被禁言" : state.muted ? "取消静音" : "静音";
   els.muteBtn.setAttribute("aria-pressed", String(state.muted));
-  els.muteBtn.disabled = blocked;
+  els.muteBtn.disabled = voiceDisabled || blocked;
 }
 
 function isCurrentUserVoiceBlocked() {
@@ -1258,12 +1368,17 @@ els.enterGameBtn.addEventListener("click", async () => {
   connectSocket();
   state.muted = true;
   updateMuteButton();
+  setActivePanel("chat");
   renderGame();
-  els.gameView.dataset.activePanel = "chat";
+  if (location.pathname !== "/turtle") history.pushState({ view: "game" }, "", "/turtle");
   showView("game");
 
   try {
-    await connectLiveKit();
+    if (state.room?.voiceEnabled === false) {
+      setVoiceStatus("房间静音");
+    } else {
+      await connectLiveKit();
+    }
   } catch (error) {
     setVoiceStatus("语音未连接", true);
     console.warn(error);
@@ -1271,6 +1386,7 @@ els.enterGameBtn.addEventListener("click", async () => {
 });
 
 els.backLobbyBtn.addEventListener("click", () => {
+  if (location.pathname === "/turtle") history.pushState({ view: "lobby" }, "", "/");
   renderLobbyRoom();
   if (state.role === "admin") loadAdminRooms();
   showView("lobby");
@@ -1317,11 +1433,114 @@ els.roomSettingsForm.addEventListener("submit", async (event) => {
         sanMax: els.settingsSanMaxInput.value,
         sanValue: els.settingsSanValueInput.value,
         locked: els.settingsLockedInput.checked,
+        voiceEnabled: els.settingsVoiceEnabledInput.checked,
+        gameType: els.settingsGameTypeInput.value,
       }),
     });
     applyRoomState(data.room);
   } catch (error) {
     alert(error.message);
+  }
+});
+
+els.profileForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.room || !state.user) return;
+  try {
+    const data = await api(`/api/rooms/${encodeURIComponent(state.room.code)}/profile`, {
+      method: "POST",
+      body: JSON.stringify({ userId: state.user.id, nickname: els.profileNameInput.value }),
+    });
+    state.user = data.user;
+    state.nickname = data.user.name;
+    els.nicknameInput.value = state.nickname;
+    els.joinNameInput.value = state.nickname;
+    applyRoomState(data.room);
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+async function createAiMember(kind) {
+  if (!canManageRoom() || !state.room) return;
+  try {
+    const data = await api(`/api/rooms/${encodeURIComponent(state.room.code)}/ai-members`, {
+      method: "POST",
+      body: JSON.stringify({
+        userId: state.user.id,
+        kind,
+        name: kind === "host" ? "AI主持" : "AI玩家",
+      }),
+    });
+    applyRoomState(data.room);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+els.addAiHostBtn.addEventListener("click", () => createAiMember("host"));
+els.addAiPlayerBtn.addEventListener("click", () => createAiMember("player"));
+
+function openAiModal(mode) {
+  state.aiModalMode = mode;
+  els.aiModal.classList.remove("hidden");
+  document.body.classList.add("modal-open");
+  if (mode === "soup") {
+    els.aiModalTitle.textContent = "AI 生成汤面";
+    els.aiModalLabel.textContent = "输入汤面描述";
+    els.aiModalInput.classList.remove("hidden");
+    els.aiModalInput.value = "";
+    els.aiModalInput.placeholder = "例如：雨夜、车站、失踪案、结尾反转但公平可推理";
+    els.aiModalNumber.classList.add("hidden");
+    els.aiModalWarning.textContent = "警告：确认后会覆盖原来的汤面、标题和汤底。";
+  } else {
+    els.aiModalTitle.textContent = "AI 生成关键节点";
+    els.aiModalLabel.textContent = "关键节点数量";
+    els.aiModalInput.classList.add("hidden");
+    els.aiModalNumber.classList.remove("hidden");
+    els.aiModalNumber.value = Math.min(12, Math.max(1, state.room?.progressNodes?.length || 6));
+    els.aiModalWarning.textContent = "警告：确认后会覆盖原来的关键节点。汤面为空时无法生成。";
+  }
+}
+
+function closeAiModal() {
+  state.aiModalMode = "";
+  els.aiModal.classList.add("hidden");
+  document.body.classList.remove("modal-open");
+}
+
+els.generateSoupBtn.addEventListener("click", () => openAiModal("soup"));
+els.generateProgressBtn.addEventListener("click", () => openAiModal("progress"));
+els.aiModalCancelBtn.addEventListener("click", closeAiModal);
+els.aiModal.addEventListener("click", (event) => {
+  if (event.target === els.aiModal) closeAiModal();
+});
+els.aiModalConfirmBtn.addEventListener("click", async () => {
+  if (!state.room || !state.aiModalMode) return;
+  const mode = state.aiModalMode;
+  const endpoint = mode === "soup" ? "soup" : "progress";
+  try {
+    if (mode === "progress" && !String(state.room.soupText || "").trim()) {
+      alert("汤面为空，无法生成关键节点。");
+      return;
+    }
+    els.aiModalConfirmBtn.disabled = true;
+    els.aiModalConfirmBtn.textContent = "生成中";
+    const data = await api(`/api/rooms/${encodeURIComponent(state.room.code)}/ai/${endpoint}`, {
+      method: "POST",
+      body: JSON.stringify({
+        userId: state.user.id,
+        description: els.aiModalInput.value,
+        count: els.aiModalNumber.value,
+      }),
+    });
+    closeAiModal();
+    applyRoomState(data.room);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    els.aiModalConfirmBtn.disabled = false;
+    els.aiModalConfirmBtn.textContent = "确认";
   }
 });
 
@@ -1410,6 +1629,24 @@ els.compactResultsBtn.addEventListener("click", () => {
 });
 
 els.memberList.addEventListener("click", (event) => {
+  const renameButton = event.target.closest(".ai-rename-btn");
+  if (renameButton) {
+    const currentName = renameButton.dataset.name || "AI成员";
+    const nextName = window.prompt("修改 AI 名称", currentName);
+    if (!nextName?.trim()) return;
+    state.socket?.emit("ai_member_rename", { playerId: renameButton.dataset.playerId, name: nextName.trim() });
+    return;
+  }
+
+  const toggleButton = event.target.closest(".ai-toggle-btn");
+  if (toggleButton) {
+    state.socket?.emit("ai_member_toggle", {
+      playerId: toggleButton.dataset.playerId,
+      enabled: toggleButton.dataset.enabled !== "true",
+    });
+    return;
+  }
+
   const button = event.target.closest(".kick-btn");
   if (!button) return;
   const member = state.room?.members.find((item) => item.id === button.dataset.playerId);
@@ -1514,9 +1751,7 @@ els.chatList.addEventListener("click", (event) => {
 
 els.mobileTabs.forEach((button) => {
   button.addEventListener("click", () => {
-    els.mobileTabs.forEach((tab) => tab.classList.remove("active"));
-    button.classList.add("active");
-    els.gameView.dataset.activePanel = button.dataset.panel;
+    setActivePanel(button.dataset.panel);
   });
 });
 

@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS users (
   nickname TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('host', 'player')),
   is_admin INTEGER NOT NULL DEFAULT 0,
+  is_ai INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -21,8 +22,10 @@ CREATE TABLE IF NOT EXISTS rooms (
   status TEXT NOT NULL DEFAULT 'waiting',
   san_value INTEGER NOT NULL DEFAULT 100,
   san_max INTEGER NOT NULL DEFAULT 100,
-  max_members INTEGER NOT NULL DEFAULT 10,
+  max_members INTEGER NOT NULL DEFAULT 6,
   locked INTEGER NOT NULL DEFAULT 0,
+  voice_enabled INTEGER NOT NULL DEFAULT 1,
+  game_type TEXT NOT NULL DEFAULT 'turtle',
   deleted_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (host_id) REFERENCES users(id)
@@ -34,6 +37,7 @@ CREATE TABLE IF NOT EXISTS room_players (
   role TEXT NOT NULL CHECK (role IN ('host', 'player')),
   muted INTEGER NOT NULL DEFAULT 1,
   voice_blocked INTEGER NOT NULL DEFAULT 0,
+  ai_enabled INTEGER NOT NULL DEFAULT 1,
   online INTEGER NOT NULL DEFAULT 1,
   joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   left_at TEXT,

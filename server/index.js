@@ -22,6 +22,9 @@ const livekitUrl = process.env.LIVEKIT_URL || "ws://localhost:7880";
 const publicLivekitUrl = process.env.PUBLIC_LIVEKIT_URL || "";
 const livekitApiKey = process.env.LIVEKIT_API_KEY || "devkey";
 const livekitApiSecret = process.env.LIVEKIT_API_SECRET || "secret";
+const aiApiUrl = process.env.AI_API_URL || "";
+const aiApiKey = process.env.AI_API_KEY || "";
+const aiModel = process.env.AI_MODEL || "";
 const hostPassword = process.env.HOST_PASSWORD || "host2026";
 const playerPassword = process.env.PLAYER_PASSWORD || "soup2026";
 const adminPassword = process.env.ADMIN_PASSWORD || "admin2026";
@@ -78,6 +81,8 @@ const defaultSoup = {
     "男人是通缉犯。他以为自己已经摆脱追捕，但时刻表上的停运通知暴露了有人伪装列车确认他的住处，警方随后找到他的家。",
 };
 
+const defaultMaxMembers = 6;
+
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA foreign_keys = ON");
@@ -120,6 +125,9 @@ if (allowedOrigins.length) {
 }
 app.use(express.json());
 app.use("/vendor/livekit", express.static(path.join(rootDir, "node_modules/livekit-client/dist")));
+app.get("/turtle", (_req, res) => {
+  res.sendFile(path.join(publicDir, "turtle", "index.html"));
+});
 app.use(express.static(publicDir, { index: "index.html", dotfiles: "deny" }));
 
 function id(prefix) {
@@ -162,10 +170,16 @@ function migrate() {
     db.exec("ALTER TABLE rooms ADD COLUMN san_max INTEGER NOT NULL DEFAULT 100");
   }
   if (!columns.includes("max_members")) {
-    db.exec("ALTER TABLE rooms ADD COLUMN max_members INTEGER NOT NULL DEFAULT 10");
+    db.exec("ALTER TABLE rooms ADD COLUMN max_members INTEGER NOT NULL DEFAULT 6");
   }
   if (!columns.includes("locked")) {
     db.exec("ALTER TABLE rooms ADD COLUMN locked INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!columns.includes("voice_enabled")) {
+    db.exec("ALTER TABLE rooms ADD COLUMN voice_enabled INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!columns.includes("game_type")) {
+    db.exec("ALTER TABLE rooms ADD COLUMN game_type TEXT NOT NULL DEFAULT 'turtle'");
   }
   if (!columns.includes("original_code")) {
     db.exec("ALTER TABLE rooms ADD COLUMN original_code TEXT");
@@ -179,6 +193,9 @@ function migrate() {
   if (!playerColumns.includes("voice_blocked")) {
     db.exec("ALTER TABLE room_players ADD COLUMN voice_blocked INTEGER NOT NULL DEFAULT 0");
   }
+  if (!playerColumns.includes("ai_enabled")) {
+    db.exec("ALTER TABLE room_players ADD COLUMN ai_enabled INTEGER NOT NULL DEFAULT 1");
+  }
 
   const userColumns = db.prepare("PRAGMA table_info(users)").all().map((column) => column.name);
   if (!userColumns.includes("client_id")) {
@@ -186,6 +203,9 @@ function migrate() {
   }
   if (!userColumns.includes("is_admin")) {
     db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!userColumns.includes("is_ai")) {
+    db.exec("ALTER TABLE users ADD COLUMN is_ai INTEGER NOT NULL DEFAULT 0");
   }
 
   const chatColumns = db.prepare("PRAGMA table_info(chat_messages)").all().map((column) => column.name);
@@ -264,6 +284,8 @@ function publicUser(user) {
     id: user.id,
     name: user.nickname,
     role: isAdmin(user) ? "管理" : user.role === "host" ? "主持" : "玩家",
+    isAi: Boolean(user.is_ai),
+    aiEnabled: user.is_ai ? Boolean(user.ai_enabled) : true,
     muted: Boolean(user.muted),
     voiceBlocked: Boolean(user.voice_blocked),
     online: Boolean(user.online),
@@ -271,14 +293,22 @@ function publicUser(user) {
   };
 }
 
-function createUser(nickname, role, clientId = "", admin = false) {
-  const user = { id: id("u"), nickname: normalizeName(nickname), role, client_id: clientId, is_admin: admin ? 1 : 0 };
-  db.prepare("INSERT INTO users (id, nickname, role, client_id, is_admin) VALUES (?, ?, ?, ?, ?)").run(
+function createUser(nickname, role, clientId = "", admin = false, isAi = false) {
+  const user = {
+    id: id(isAi ? "ai" : "u"),
+    nickname: normalizeName(nickname),
+    role,
+    client_id: clientId,
+    is_admin: admin ? 1 : 0,
+    is_ai: isAi ? 1 : 0,
+  };
+  db.prepare("INSERT INTO users (id, nickname, role, client_id, is_admin, is_ai) VALUES (?, ?, ?, ?, ?, ?)").run(
     user.id,
     user.nickname,
     user.role,
     clientId || null,
     user.is_admin,
+    user.is_ai,
   );
   return user;
 }
@@ -311,8 +341,8 @@ function getRoomByCode(code) {
 function getRoomMembers(roomId) {
   return db
     .prepare(
-      `SELECT users.id, users.nickname, users.is_admin, room_players.role, room_players.muted,
-              room_players.voice_blocked, room_players.online
+      `SELECT users.id, users.nickname, users.is_admin, users.is_ai, room_players.role, room_players.muted,
+              room_players.voice_blocked, room_players.ai_enabled, room_players.online
        FROM room_players
        JOIN users ON users.id = room_players.user_id
        WHERE room_players.room_id = ? AND room_players.left_at IS NULL AND room_players.online = 1
@@ -460,6 +490,8 @@ function getRoomState(roomId, options = {}) {
     sanMax: room.san_max,
     maxMembers: room.max_members,
     locked: Boolean(room.locked),
+    voiceEnabled: Boolean(room.voice_enabled),
+    gameType: room.game_type || "turtle",
     status: room.status,
     members: getRoomMembers(room.id),
     chats: getChatHistory(room.id),
@@ -668,7 +700,7 @@ function getAdminRoomList() {
   return db
     .prepare(
       `SELECT rooms.id, rooms.code, rooms.original_code, rooms.name, rooms.soup_title, rooms.san_value, rooms.san_max,
-              rooms.max_members, rooms.locked, rooms.status, rooms.deleted_at, rooms.created_at,
+              rooms.max_members, rooms.locked, rooms.voice_enabled, rooms.game_type, rooms.status, rooms.deleted_at, rooms.created_at,
               host.nickname AS host_name,
               COUNT(room_players.user_id) AS member_count,
               SUM(CASE WHEN room_players.online = 1 AND room_players.left_at IS NULL THEN 1 ELSE 0 END) AS online_count,
@@ -692,6 +724,8 @@ function getAdminRoomList() {
       sanMax: room.san_max,
       maxMembers: room.max_members,
       locked: Boolean(room.locked),
+      voiceEnabled: Boolean(room.voice_enabled),
+      gameType: room.game_type || "turtle",
       status: room.status,
       deletedAt: room.deleted_at,
       memberCount: room.member_count || 0,
@@ -722,6 +756,60 @@ function createChatMessage({ roomId, userId, message, kind = "chat", questionId 
   };
   io.to(roomId).emit("chat_message", chat);
   return chat;
+}
+
+function requireAiConfig() {
+  if (!aiApiUrl || !aiApiKey || !aiModel) {
+    throw new Error("AI_API_URL、AI_API_KEY 或 AI_MODEL 未配置。");
+  }
+}
+
+function extractJsonObject(text) {
+  const raw = String(text || "").trim();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("AI 返回内容不是 JSON。");
+    return JSON.parse(match[0]);
+  }
+}
+
+async function requestAiJson(messages) {
+  requireAiConfig();
+  const response = await fetch(aiApiUrl, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${aiApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: aiModel,
+      temperature: 0.8,
+      messages,
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error?.message || data.message || "AI 请求失败。");
+  }
+  return extractJsonObject(data.choices?.[0]?.message?.content || data.output_text || data.content || "");
+}
+
+function normalizeAiSoup(payload) {
+  return {
+    title: String(payload.title || payload.soupTitle || "").trim().slice(0, 40),
+    soup: String(payload.soup || payload.soupText || "").trim().slice(0, 2000),
+    answer: String(payload.answer || payload.answerText || "").trim().slice(0, 4000),
+  };
+}
+
+function normalizeAiNodes(payload, count) {
+  const values = Array.isArray(payload.nodes) ? payload.nodes : Array.isArray(payload) ? payload : [];
+  return values
+    .map((value) => String(value?.label || value || "").trim().slice(0, 120))
+    .filter(Boolean)
+    .slice(0, count);
 }
 
 function clampInt(value, fallback, min, max) {
@@ -870,7 +958,20 @@ app.post("/api/session/resume", (req, res) => {
 });
 
 app.post("/api/rooms", (req, res) => {
-  const { userId, nickname, name, soupTitle, soupText, answerText, clientId, maxMembers, sanMax, locked } = req.body;
+  const {
+    userId,
+    nickname,
+    name,
+    soupTitle,
+    soupText,
+    answerText,
+    clientId,
+    maxMembers,
+    sanMax,
+    locked,
+    voiceEnabled = true,
+    gameType = "turtle",
+  } = req.body;
   let user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
 
   if (!user || !canManage(user)) {
@@ -891,14 +992,16 @@ app.post("/api/rooms", (req, res) => {
     soupTitle: String(soupTitle || defaultSoup.title).trim().slice(0, 40) || defaultSoup.title,
     soupText: String(soupText || defaultSoup.text).trim().slice(0, 2000) || defaultSoup.text,
     answerText: String(answerText || defaultSoup.answer).trim().slice(0, 4000) || defaultSoup.answer,
-    maxMembers: clampInt(maxMembers, 10, 2, 20),
+    maxMembers: clampInt(maxMembers, defaultMaxMembers, 2, 20),
     sanMax: clampInt(sanMax, 100, 10, 999),
     locked: locked ? 1 : 0,
+    voiceEnabled: voiceEnabled === false ? 0 : 1,
+    gameType: String(gameType || "turtle") === "turtle" ? "turtle" : "turtle",
   };
 
   db.prepare(
-    `INSERT INTO rooms (id, code, original_code, name, soup_title, soup_text, answer_text, host_id, san_value, san_max, max_members, locked)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO rooms (id, code, original_code, name, soup_title, soup_text, answer_text, host_id, san_value, san_max, max_members, locked, voice_enabled, game_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     room.id,
     room.code,
@@ -912,6 +1015,8 @@ app.post("/api/rooms", (req, res) => {
     room.sanMax,
     room.maxMembers,
     room.locked,
+    room.voiceEnabled,
+    room.gameType,
   );
   db.prepare("INSERT INTO game_sessions (id, room_id, san_value) VALUES (?, ?, ?)").run(id("gs"), room.id, room.sanMax);
   db.prepare("INSERT INTO room_players (room_id, user_id, role, muted) VALUES (?, ?, ?, 1)").run(
@@ -1042,7 +1147,7 @@ app.post("/api/rooms/:code/leave", (req, res) => {
 });
 
 app.post("/api/rooms/:code/settings", (req, res) => {
-  const { userId, name, maxMembers, sanMax, sanValue, locked } = req.body;
+  const { userId, name, maxMembers, sanMax, sanValue, locked, voiceEnabled, gameType } = req.body;
   const room = getRoomByCode(req.params.code);
   const user = userId ? db.prepare("SELECT * FROM users WHERE id = ?").get(userId) : null;
 
@@ -1060,18 +1165,150 @@ app.post("/api/rooms/:code/settings", (req, res) => {
   const nextSanMax = clampInt(sanMax, room.san_max, 10, 999);
   const nextSanValue = Math.min(nextSanMax, clampInt(sanValue, room.san_value, 0, nextSanMax));
   const nextLocked = locked ? 1 : 0;
+  const nextVoiceEnabled = voiceEnabled === false ? 0 : 1;
+  const nextGameType = String(gameType || room.game_type || "turtle") === "turtle" ? "turtle" : "turtle";
 
   db.prepare(
     `UPDATE rooms
-     SET name = ?, max_members = ?, locked = ?, san_max = ?, san_value = ?
+     SET name = ?, max_members = ?, locked = ?, san_max = ?, san_value = ?, voice_enabled = ?, game_type = ?
      WHERE id = ?`,
-  ).run(nextName, nextMaxMembers, nextLocked, nextSanMax, nextSanValue, room.id);
+  ).run(nextName, nextMaxMembers, nextLocked, nextSanMax, nextSanValue, nextVoiceEnabled, nextGameType, room.id);
   db.prepare(
     `UPDATE game_sessions SET san_value = ?
      WHERE room_id = ? AND ended_at IS NULL`,
   ).run(nextSanValue, room.id);
   emitRoomState(room.id);
   res.json({ room: getRoomState(room.id, { includeAnswer: true, includeAllProgress: true }) });
+});
+
+app.post("/api/rooms/:code/profile", (req, res) => {
+  const { userId, nickname } = req.body;
+  const room = getRoomByCode(req.params.code);
+  const user = userId ? db.prepare("SELECT * FROM users WHERE id = ?").get(userId) : null;
+  if (!room || !user) {
+    res.status(404).json({ error: "用户或房间不存在。" });
+    return;
+  }
+  const member = db
+    .prepare("SELECT * FROM room_players WHERE room_id = ? AND user_id = ? AND left_at IS NULL")
+    .get(room.id, user.id);
+  if (!member) {
+    res.status(403).json({ error: "你不在这个房间中。" });
+    return;
+  }
+  const nextUser = updateNickname(user.id, nickname || user.nickname);
+  emitRoomState(room.id);
+  res.json({ user: { id: nextUser.id, name: nextUser.nickname, role: authRole(nextUser) }, room: getRoomStateForUser(room.id, nextUser) });
+});
+
+app.post("/api/rooms/:code/ai-members", (req, res) => {
+  const { userId, kind = "player", name = "" } = req.body;
+  const room = getRoomByCode(req.params.code);
+  const user = userId ? db.prepare("SELECT * FROM users WHERE id = ?").get(userId) : null;
+  if (!room || !user) {
+    res.status(404).json({ error: "用户或房间不存在。" });
+    return;
+  }
+  if (!canManage(user)) {
+    res.status(403).json({ error: "只有主持人或管理员可以创建 AI 测试成员。" });
+    return;
+  }
+  const role = kind === "host" ? "host" : "player";
+  if (role === "player") {
+    const aiHost = db
+      .prepare(
+        `SELECT users.id
+         FROM room_players
+         JOIN users ON users.id = room_players.user_id
+         WHERE room_players.room_id = ? AND room_players.left_at IS NULL AND room_players.role = 'host' AND users.is_ai = 1
+         LIMIT 1`,
+      )
+      .get(room.id);
+    if (!aiHost) {
+      res.status(409).json({ error: "请先创建 AI 主持。" });
+      return;
+    }
+  }
+  const aiName = normalizeName(name || (role === "host" ? "AI主持" : "AI玩家"));
+  const aiUser = createUser(aiName, role, "", false, true);
+  db.prepare("INSERT INTO room_players (room_id, user_id, role, muted, online) VALUES (?, ?, ?, 1, 1)").run(
+    room.id,
+    aiUser.id,
+    role,
+  );
+  emitRoomState(room.id);
+  res.status(201).json({ room: getRoomState(room.id, { includeAnswer: true, includeAllProgress: true }) });
+});
+
+app.post("/api/rooms/:code/ai/soup", async (req, res) => {
+  const { userId, description } = req.body;
+  const room = getRoomByCode(req.params.code);
+  const user = userId ? db.prepare("SELECT * FROM users WHERE id = ?").get(userId) : null;
+  if (!room || !user) {
+    res.status(404).json({ error: "用户或房间不存在。" });
+    return;
+  }
+  if (!canManage(user)) {
+    res.status(403).json({ error: "只有主持人或管理员可以生成汤面。" });
+    return;
+  }
+  const prompt = String(description || "").trim().slice(0, 1000);
+  if (!prompt) {
+    res.status(400).json({ error: "请输入生成描述。" });
+    return;
+  }
+  try {
+    const payload = await requestAiJson([
+      { role: "system", content: "你是海龟汤主持人。只返回 JSON，不要 Markdown。格式：{\"title\":\"标题\",\"soup\":\"玩家看到的汤面\",\"answer\":\"主持人看到的完整汤底\"}。" },
+      { role: "user", content: `根据描述生成一个公平、可推理、适合多人提问的海龟汤：${prompt}` },
+    ]);
+    const soup = normalizeAiSoup(payload);
+    if (!soup.title || !soup.soup || !soup.answer) throw new Error("AI 返回缺少 title/soup/answer。");
+    db.prepare("UPDATE rooms SET soup_title = ?, soup_text = ?, answer_text = ?, answer_revealed = 0 WHERE id = ?").run(
+      soup.title,
+      soup.soup,
+      soup.answer,
+      room.id,
+    );
+    emitRoomState(room.id);
+    res.json({ room: getRoomState(room.id, { includeAnswer: true, includeAllProgress: true }) });
+  } catch (error) {
+    res.status(502).json({ error: error.message || "AI 生成失败。" });
+  }
+});
+
+app.post("/api/rooms/:code/ai/progress", async (req, res) => {
+  const { userId, count } = req.body;
+  const room = getRoomByCode(req.params.code);
+  const user = userId ? db.prepare("SELECT * FROM users WHERE id = ?").get(userId) : null;
+  if (!room || !user) {
+    res.status(404).json({ error: "用户或房间不存在。" });
+    return;
+  }
+  if (!canManage(user)) {
+    res.status(403).json({ error: "只有主持人或管理员可以生成关键节点。" });
+    return;
+  }
+  if (!String(room.soup_text || "").trim()) {
+    res.status(400).json({ error: "汤面为空，无法生成关键节点。" });
+    return;
+  }
+  const nodeCount = clampInt(count, 6, 1, 20);
+  try {
+    const payload = await requestAiJson([
+      { role: "system", content: "你是海龟汤主持人。只返回 JSON，不要 Markdown。格式：{\"nodes\":[\"关键节点1\",\"关键节点2\"]}。" },
+      { role: "user", content: `请根据汤面和汤底生成 ${nodeCount} 个循序渐进的关键节点。\n标题：${room.soup_title}\n汤面：${room.soup_text}\n汤底：${room.answer_text}` },
+    ]);
+    const nodes = normalizeAiNodes(payload, nodeCount);
+    if (!nodes.length) throw new Error("AI 未返回有效关键节点。");
+    db.prepare("DELETE FROM progress_nodes WHERE room_id = ?").run(room.id);
+    const insert = db.prepare("INSERT INTO progress_nodes (id, room_id, label, sort_order) VALUES (?, ?, ?, ?)");
+    nodes.forEach((label, index) => insert.run(id("pn"), room.id, label, index + 1));
+    emitRoomState(room.id);
+    res.json({ room: getRoomState(room.id, { includeAnswer: true, includeAllProgress: true }) });
+  } catch (error) {
+    res.status(502).json({ error: error.message || "AI 生成失败。" });
+  }
 });
 
 app.post("/api/rooms/:code/reset", (req, res) => {
@@ -1108,6 +1345,10 @@ app.post("/api/rooms/:code/reset", (req, res) => {
 });
 
 app.post("/api/livekit/token", requireSession, async (req, res) => {
+  if (!req.room.voice_enabled) {
+    res.status(403).json({ error: "当前房间未开启语音通话。" });
+    return;
+  }
   const at = new AccessToken(livekitApiKey, livekitApiSecret, {
     identity: req.user.id,
     name: req.user.nickname,
@@ -1333,12 +1574,14 @@ io.on("connection", (socket) => {
     const sanMax = clampInt(payload.sanMax, current.san_max, 10, 999);
     const sanValue = Math.min(sanMax, clampInt(payload.sanValue, current.san_value, 0, sanMax));
     const locked = payload.locked ? 1 : 0;
+    const voiceEnabled = payload.voiceEnabled === false ? 0 : 1;
+    const gameType = String(payload.gameType || current.game_type || "turtle") === "turtle" ? "turtle" : "turtle";
 
     db.prepare(
       `UPDATE rooms
-       SET name = ?, max_members = ?, locked = ?, san_max = ?, san_value = ?
+       SET name = ?, max_members = ?, locked = ?, san_max = ?, san_value = ?, voice_enabled = ?, game_type = ?
        WHERE id = ?`,
-    ).run(name, maxMembers, locked, sanMax, sanValue, room.id);
+    ).run(name, maxMembers, locked, sanMax, sanValue, voiceEnabled, gameType, room.id);
     db.prepare(
       `UPDATE game_sessions SET san_value = ?
        WHERE room_id = ? AND ended_at IS NULL`,
@@ -1434,13 +1677,13 @@ io.on("connection", (socket) => {
     if (!targetId || targetId === user.id) return;
     const target = db
       .prepare(
-        `SELECT room_players.*, users.is_admin
+        `SELECT room_players.*, users.is_admin, users.is_ai
          FROM room_players
          JOIN users ON users.id = room_players.user_id
          WHERE room_players.room_id = ? AND room_players.user_id = ? AND room_players.left_at IS NULL`,
       )
       .get(room.id, targetId);
-    if (!target || target.is_admin || (target.role === "host" && !isAdmin(user))) return;
+    if (!target || target.is_admin || (!target.is_ai && target.role === "host" && !isAdmin(user))) return;
 
     const blocked = payload.blocked ? 1 : 0;
     const muted = blocked ? 1 : target.muted ? 1 : 0;
@@ -1467,13 +1710,13 @@ io.on("connection", (socket) => {
     if (!targetId || targetId === user.id) return;
     const target = db
       .prepare(
-        `SELECT room_players.*, users.is_admin
+        `SELECT room_players.*, users.is_admin, users.is_ai
          FROM room_players
          JOIN users ON users.id = room_players.user_id
          WHERE room_players.room_id = ? AND room_players.user_id = ? AND room_players.left_at IS NULL`,
       )
       .get(room.id, targetId);
-    if (!target || target.is_admin || (target.role === "host" && !isAdmin(user))) return;
+    if (!target || target.is_admin || (!target.is_ai && target.role === "host" && !isAdmin(user))) return;
 
     clearDisconnectTimer(room.id, targetId);
     db.prepare(
@@ -1485,6 +1728,46 @@ io.on("connection", (socket) => {
         targetSocket.disconnect(true);
       }
     }
+    emitRoomState(room.id);
+  });
+
+  socket.on("ai_member_rename", (payload = {}) => {
+    if (!canManage(user)) return;
+    const targetId = String(payload.playerId || "");
+    const name = normalizeName(payload.name || "");
+    if (!targetId || !name) return;
+    const target = db
+      .prepare(
+        `SELECT users.id, users.is_ai
+         FROM room_players
+         JOIN users ON users.id = room_players.user_id
+         WHERE room_players.room_id = ? AND room_players.user_id = ? AND room_players.left_at IS NULL`,
+      )
+      .get(room.id, targetId);
+    if (!target?.is_ai) return;
+    updateNickname(targetId, name);
+    emitRoomState(room.id);
+  });
+
+  socket.on("ai_member_toggle", (payload = {}) => {
+    if (!canManage(user)) return;
+    const targetId = String(payload.playerId || "");
+    if (!targetId) return;
+    const target = db
+      .prepare(
+        `SELECT users.id, users.is_ai
+         FROM room_players
+         JOIN users ON users.id = room_players.user_id
+         WHERE room_players.room_id = ? AND room_players.user_id = ? AND room_players.left_at IS NULL`,
+      )
+      .get(room.id, targetId);
+    if (!target?.is_ai) return;
+    const enabled = payload.enabled ? 1 : 0;
+    db.prepare("UPDATE room_players SET ai_enabled = ? WHERE room_id = ? AND user_id = ?").run(
+      enabled,
+      room.id,
+      targetId,
+    );
     emitRoomState(room.id);
   });
 

@@ -20,6 +20,8 @@
 
 body {
   margin: 0;
+  width: 100%;
+  max-width: 100%;
   min-height: 100vh;
   font-family:
     "Inter", "Noto Sans SC", "Microsoft YaHei", system-ui, -apple-system,
@@ -33,103 +35,14 @@ body {
     color 220ms ease;
 }
 
-body.san-warning:not(.san-mood-off) {
-  --ink: #1d1111;
-  --muted: #756442;
-  --line: #e3d3a6;
-  --panel: #fffaf0;
-  --soft: #fff3cf;
-  --deep: #4d3711;
-  --green: #8d6a17;
-  --blue: #75623b;
-  background:
-    radial-gradient(circle at 0 0, rgba(183, 121, 31, 0.26), transparent 28rem),
-    linear-gradient(135deg, #f7efd8 0%, #fff8e6 48%, #ede3c7 100%);
+html {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
-body.san-danger:not(.san-mood-off) {
-  --ink: #241313;
-  --muted: #7d5f5a;
-  --line: #e3bdb5;
-  --panel: #fff7f3;
-  --soft: #f8ded8;
-  --deep: #5c1717;
-  --green: #934242;
-  --blue: #7d4c59;
-  --red: #b03939;
-  background:
-    radial-gradient(circle at 0 0, rgba(176, 57, 57, 0.28), transparent 28rem),
-    linear-gradient(135deg, #f3dfda 0%, #fff1ed 48%, #ead3ce 100%);
-}
-
-body.san-critical:not(.san-mood-off) {
-  --ink: #f8eeee;
-  --muted: #d9b7b0;
-  --line: rgba(255, 226, 220, 0.16);
-  --panel: #201515;
-  --soft: #321a1a;
-  --deep: #ffe8df;
-  --green: #b94b4b;
-  --blue: #b06b78;
-  --red: #d44949;
-  --shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
-  background:
-    radial-gradient(circle at 50% 0, rgba(161, 62, 62, 0.36), transparent 30rem),
-    linear-gradient(135deg, #120d0d 0%, #2a1212 50%, #0f0d0d 100%);
-}
-
-body.san-critical:not(.san-mood-off) .app-header,
-body.san-critical:not(.san-mood-off) .game-header,
-body.san-critical:not(.san-mood-off) .gate-card,
-body.san-critical:not(.san-mood-off) .action-panel,
-body.san-critical:not(.san-mood-off) .room-panel,
-body.san-critical:not(.san-mood-off) .admin-rooms-panel,
-body.san-critical:not(.san-mood-off) .voice-panel,
-body.san-critical:not(.san-mood-off) .leaderboard-panel,
-body.san-critical:not(.san-mood-off) .story-panel,
-body.san-critical:not(.san-mood-off) .result-panel,
-body.san-critical:not(.san-mood-off) .chat-panel,
-body.san-critical:not(.san-mood-off) .san-panel,
-body.san-critical:not(.san-mood-off) .control-deck,
-body.san-critical:not(.san-mood-off) .player-strip,
-body.san-critical:not(.san-mood-off) .host-manage-panel,
-body.san-critical:not(.san-mood-off) .host-editor-panel,
-body.san-critical:not(.san-mood-off) .host-progress-panel {
-  background: rgba(32, 21, 21, 0.94);
-}
-
-body.san-critical:not(.san-mood-off) input,
-body.san-critical:not(.san-mood-off) textarea,
-body.san-critical:not(.san-mood-off) .member-card,
-body.san-critical:not(.san-mood-off) .voice-card,
-body.san-critical:not(.san-mood-off) .result-item,
-body.san-critical:not(.san-mood-off) .progress-item,
-body.san-critical:not(.san-mood-off) .leaderboard-item,
-body.san-critical:not(.san-mood-off) .player-chip {
-  color: var(--ink);
-  background: #2b1b1b;
-}
-
-body.san-critical:not(.san-mood-off) .soup-text,
-body.san-critical:not(.san-mood-off) .chat-message span,
-body.san-critical:not(.san-mood-off) .chat-message p,
-body.san-critical:not(.san-mood-off) .leaderboard-item span,
-body.san-critical:not(.san-mood-off) .leaderboard-item em {
-  color: #f7e8e4;
-}
-
-body.san-critical:not(.san-mood-off) .chat-message > div,
-body.san-critical:not(.san-mood-off) .chat-message.own > div,
-body.san-critical:not(.san-mood-off) .chat-message.chat-question > div,
-body.san-critical:not(.san-mood-off) .chat-message.chat-judgement > div,
-body.san-critical:not(.san-mood-off) .chat-message.chat-hint > div {
-  border-color: rgba(255, 221, 214, 0.18);
-  background: #2b1b1b;
-}
-
-body.san-critical:not(.san-mood-off) .player-chip.self-member {
-  border-color: rgba(255, 221, 214, 0.28);
-  background: #3a1f1f;
+body {
+  overflow-x: hidden;
 }
 
 button,
@@ -266,7 +179,8 @@ h2 {
 }
 
 input,
-textarea {
+textarea,
+select {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -274,7 +188,8 @@ textarea {
   background: #fffdf8;
 }
 
-input {
+input,
+select {
   height: 48px;
   padding: 0 14px;
 }
@@ -289,7 +204,8 @@ textarea {
 }
 
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   outline: 3px solid rgba(31, 111, 91, 0.16);
   border-color: var(--green);
 }
@@ -316,13 +232,75 @@ textarea:focus {
   font-weight: 800;
 }
 
+body.modal-open .app-shell {
+  filter: blur(3px);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(10, 16, 15, 0.54);
+}
+
+.modal-card {
+  width: min(560px, 100%);
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  padding: 20px;
+  background: var(--panel);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+}
+
+.modal-card h2 {
+  font-size: 1.3rem;
+}
+
+.modal-card label {
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.modal-warning {
+  margin: 0;
+  color: var(--red);
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.modal-actions {
+  justify-content: flex-end;
+}
+
+.modal-actions button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 16px;
+  color: #fff;
+  background: var(--green);
+  font-weight: 900;
+}
+
+.modal-actions button:first-child {
+  color: var(--deep);
+  background: var(--soft);
+}
+
 .identity-pill,
 .room-code,
 .game-actions button,
 .story-head button,
 .answer-head button,
 .chat-head button,
-#compactResultsBtn {
+#compactResultsBtn,
+.ai-generate-btn {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 8px 12px;
@@ -368,12 +346,17 @@ textarea:focus {
 
 .lobby-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 0.75fr) minmax(260px, 0.75fr) minmax(360px, 1.2fr);
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
   gap: 16px;
+  align-items: start;
 }
 
 .lobby-grid:has(#createRoomPanel.hidden) {
-  grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.2fr);
+  grid-template-columns: minmax(260px, 0.9fr) minmax(420px, 1.1fr);
+}
+
+.lobby-grid:has(#createRoomPanel.hidden):has(#roomPanel.hidden) {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .lobby-grid:has(#createRoomPanel.hidden) .action-panel,
@@ -397,6 +380,77 @@ textarea:focus {
 .host-progress-panel {
   padding: 18px;
   background: rgba(255, 253, 248, 0.94);
+}
+
+.room-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
+  gap: 16px;
+}
+
+.room-panel > .room-topline,
+.room-panel > .room-enter-actions {
+  grid-column: 1 / -1;
+}
+
+.room-section {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: rgba(237, 245, 239, 0.58);
+}
+
+.section-heading,
+.profile-form,
+.ai-member-actions,
+.modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.section-heading {
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.profile-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-bottom: 12px;
+}
+
+.profile-form label {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.profile-form button,
+.ai-member-actions button,
+.ai-generate-btn {
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 13px;
+  color: #fff;
+  background: var(--blue);
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.ai-member-actions {
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.ai-generate-btn {
+  width: 100%;
+  margin: 0;
+  background: var(--blue);
 }
 
 .panel-heading {
@@ -428,9 +482,7 @@ textarea:focus {
 }
 
 .room-settings-panel {
-  margin: 16px 0;
-  border-top: 1px solid var(--line);
-  padding-top: 16px;
+  margin: 0;
 }
 
 .admin-rooms-panel {
@@ -719,6 +771,30 @@ img.avatar {
   font-weight: 900;
 }
 
+.member-actions {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.member-actions button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: #fff;
+  background: var(--blue);
+  font-size: 0.82rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.member-actions .kick-btn {
+  grid-column: auto;
+  background: #7f2e2e;
+}
+
 .primary-wide {
   width: 100%;
 }
@@ -821,9 +897,24 @@ img.avatar {
 
 .control-deck {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(240px, 0.55fr) minmax(360px, 1fr);
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
   gap: 14px;
   align-items: start;
+}
+
+.control-deck > .san-panel {
+  order: 0;
+  grid-column: 1 / -1;
+}
+
+.control-deck > .question-form {
+  order: 1;
+  grid-column: 1 / -1;
+}
+
+.control-deck > .host-controls {
+  order: 1;
+  grid-column: 1 / -1;
 }
 
 .voice-list {
@@ -860,7 +951,8 @@ img.avatar {
 }
 
 .voice-block-btn {
-  grid-column: 2 / -1;
+  grid-column: 2;
+  grid-row: 2;
   justify-self: start;
   min-height: 32px;
   border: 0;
@@ -870,6 +962,12 @@ img.avatar {
   background: var(--red);
   font-size: 0.82rem;
   font-weight: 900;
+}
+
+.voice-kick-btn {
+  grid-column: 3;
+  grid-row: 2;
+  justify-self: end;
 }
 
 .voice-card.blocked .voice-block-btn {
@@ -1012,9 +1110,34 @@ img.avatar {
 }
 
 .host-controls {
-  margin-top: 14px;
-  border-top: 1px solid var(--line);
-  padding-top: 14px;
+  grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr);
+  align-items: start;
+}
+
+.host-controls > .eyebrow {
+  grid-column: 1 / -1;
+}
+
+.host-controls > .pending-question-preview {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.host-controls > .judge-buttons {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.host-controls > textarea {
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 112px;
+}
+
+.host-controls > button {
+  grid-column: 2;
+  grid-row: 3;
+  align-self: end;
 }
 
 .pending-question-preview {
@@ -1041,7 +1164,7 @@ img.avatar {
 
 .judge-buttons {
   display: grid;
-  grid-template-columns: repeat(5, minmax(76px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
   gap: 8px;
 }
 
@@ -1404,7 +1527,8 @@ img.avatar {
 }
 
 .host-editor-actions,
-.progress-form {
+.progress-form,
+.host-progress-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
@@ -1412,6 +1536,7 @@ img.avatar {
 
 .host-editor-actions button,
 .progress-form button,
+.host-progress-actions button,
 .progress-item button {
   min-height: 42px;
   border: 0;
@@ -1426,6 +1551,18 @@ img.avatar {
   height: 48px;
   min-height: 0;
   padding: 0 16px;
+}
+
+.host-editor-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.host-progress-actions {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.host-progress-actions .ai-generate-btn {
+  height: 48px;
 }
 
 .danger-button,
@@ -1471,6 +1608,7 @@ img.avatar {
 
   .room-panel {
     grid-column: 1 / -1;
+    grid-template-columns: 1fr;
   }
 
   .lobby-grid:has(#createRoomPanel.hidden) {
@@ -1478,7 +1616,7 @@ img.avatar {
   }
 
   .control-deck {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .host-manage-panel {
@@ -1486,7 +1624,7 @@ img.avatar {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 900px), (pointer: coarse) {
   .app-shell {
     padding: 0;
   }
@@ -1504,6 +1642,26 @@ img.avatar {
   .admin-rooms-panel {
     width: 100%;
     min-width: 0;
+  }
+
+  .profile-form,
+  .modal-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-form {
+    display: grid;
+  }
+
+  .modal-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .profile-form button,
+  .ai-member-actions button,
+  .modal-actions button {
+    width: 100%;
   }
 
   .gate-visual {
@@ -1550,6 +1708,29 @@ img.avatar {
   .game-view[data-active-panel="ask"] [data-panel-view]:not([data-panel-view="ask"]),
   .game-view[data-active-panel="manage"] [data-panel-view]:not([data-panel-view="manage"]) {
     display: none;
+  }
+
+  .control-deck {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .control-deck > .san-panel,
+  .control-deck > .question-form,
+  .control-deck > .host-controls {
+    grid-column: 1;
+  }
+
+  .host-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .host-controls > .eyebrow,
+  .host-controls > .pending-question-preview,
+  .host-controls > .judge-buttons,
+  .host-controls > textarea,
+  .host-controls > button {
+    grid-column: 1;
+    grid-row: auto;
   }
 
   .app-header,
@@ -1630,6 +1811,7 @@ img.avatar {
   .chat-form,
   .host-editor-actions,
   .progress-form,
+  .host-progress-actions,
   .member-summary {
     grid-template-columns: 1fr;
   }
@@ -1671,13 +1853,18 @@ img.avatar {
   }
 
   .chat-form textarea {
+    height: 42px;
     min-height: 42px;
     max-height: 132px;
+    padding: 8px 10px;
+    line-height: 1.3;
     resize: none;
   }
 
   .chat-form button {
+    height: 42px;
     min-height: 42px;
+    align-self: end;
     white-space: nowrap;
   }
 
@@ -1704,7 +1891,7 @@ img.avatar {
 
   .voice-card {
     flex-basis: auto;
-    grid-template-columns: 42px minmax(0, 1fr);
+    grid-template-columns: 42px minmax(0, 1fr) auto auto;
   }
 
   .voice-meter {
@@ -1713,17 +1900,80 @@ img.avatar {
   }
 
   .voice-block-btn {
-    grid-column: 2 / -1;
+    grid-column: 3;
+    grid-row: 1;
     justify-self: stretch;
     width: 100%;
     white-space: nowrap;
   }
 
-  .kick-btn,
   .voice-kick-btn {
+    grid-column: 4;
+    grid-row: 1;
+    justify-self: stretch;
+    width: 100%;
+    white-space: nowrap;
+  }
+
+  .member-card .kick-btn {
     grid-column: 2 / -1;
     justify-self: stretch;
     width: 100%;
     white-space: nowrap;
+  }
+}
+
+@media (orientation: landscape) and (pointer: coarse) {
+  .control-deck {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .control-deck > .san-panel {
+    grid-column: 1 / -1;
+  }
+
+  .control-deck > .question-form {
+    grid-column: 1 / -1;
+  }
+
+  .control-deck > .host-controls {
+    grid-column: 1 / -1;
+  }
+
+  .question-form .input-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
+
+  .host-controls {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .host-controls > .eyebrow {
+    grid-column: 1 / -1;
+  }
+
+  .host-controls > .pending-question-preview {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .host-controls > .judge-buttons {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .host-controls > textarea {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .host-controls > button {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  .judge-buttons {
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
   }
 }
